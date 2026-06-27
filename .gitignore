@@ -48,8 +48,6 @@ desktop.ini
 # ==========================================
 #  Spec-Kit & Claude Code
 # ==========================================
-!.spec-kit/
-!.spec-kit/**
-!.claude/
-!.claude/**
-!scripts/spec-check.js
+.specify/
+.claude/
+.claude/**
