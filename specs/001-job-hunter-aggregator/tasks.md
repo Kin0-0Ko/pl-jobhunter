@@ -141,9 +141,9 @@ description: "Task list for Job Hunter Aggregator — regenerated with Swagger/v
 
 ### Implementation — US4
 
-- [ ] T047 [P] [US4] Add `telegraf@4` to `apps/backend/package.json` deps; run `pnpm install`
-- [ ] T048 [US4] Create `apps/backend/src/bot/telegram.ts` — `Telegraf` instance with `TELEGRAM_BOT_TOKEN`; export `sendJobAlert(job: Job, score: number): Promise<void>` calling `bot.telegram.sendMessage(TELEGRAM_ADMIN_CHAT_ID, msg)`; format: `🎯 ${title} @ ${company}\nScore: ${score}/100\n${url}`; catch + log errors, do not rethrow
-- [ ] T049 [US4] Wire `sendJobAlert` into `apps/backend/src/scheduler/etl.ts` — call after successful `ai_analysis` INSERT when `match_score >= Number(process.env.ALERT_SCORE_THRESHOLD ?? 80)`
+- [x] T047 [P] [US4] Add `telegraf@4` to `apps/backend/package.json` deps; run `pnpm install`
+- [x] T048 [US4] Create `apps/backend/src/bot/telegram.ts` — `Telegraf` instance with `TELEGRAM_BOT_TOKEN`; export `sendJobAlert(job: Job, score: number): Promise<void>` calling `bot.telegram.sendMessage(TELEGRAM_ADMIN_CHAT_ID, msg)`; format: `🎯 ${title} @ ${company}\nScore: ${score}/100\n${url}`; catch + log errors, do not rethrow
+- [x] T049 [US4] Wire `sendJobAlert` into `apps/backend/src/scheduler/etl.ts` — call after successful `ai_analysis` INSERT when `match_score >= Number(process.env.ALERT_SCORE_THRESHOLD ?? 80)`
 
 **Checkpoint**: `sendJobAlert` fires for score ≥ 80; no message for score < 80; Telegram API error logged but ETL continues.
 
