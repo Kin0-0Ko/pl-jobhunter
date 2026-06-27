@@ -1,10 +1,40 @@
 import type { Job } from '@pl-jobhunter/shared';
+import oracledb from 'oracledb';
+import { getPool } from '../config/database.js';
 
 export interface OllamaScoreResult {
   match_score: number;
   summary: string;
   tech_stack: string[];
   why_good: string;
+}
+
+async function getProfileFromDb(): Promise<string | null> {
+  try {
+    const pool = await getPool();
+    const conn = await pool.getConnection();
+    try {
+      const result = await conn.execute<Record<string, unknown>>(
+        `SELECT skills, resume_text, preferred_contract, search_preferences
+         FROM user_profile WHERE id = 1`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row = result.rows?.[0];
+      if (!row) return null;
+
+      const skills = JSON.parse(row['SKILLS'] as string) as string[];
+      const parts = [`Skills: ${skills.join(', ')}`];
+      if (row['PREFERRED_CONTRACT']) parts.push(`Preferred contract: ${row['PREFERRED_CONTRACT'] as string}`);
+      if (row['RESUME_TEXT']) parts.push(`Background: ${row['RESUME_TEXT'] as string}`);
+      if (row['SEARCH_PREFERENCES']) parts.push(`Preferences: ${row['SEARCH_PREFERENCES'] as string}`);
+      return parts.join('. ');
+    } finally {
+      await conn.close();
+    }
+  } catch {
+    return null;
+  }
 }
 
 function buildPrompt(job: Job, userProfile: string): string {
@@ -51,9 +81,19 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
 }
 
 export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
-  const userProfile =
-    process.env.OLLAMA_USER_PROFILE ??
-    'Senior TypeScript developer interested in remote roles';
+  const dbProfile = await getProfileFromDb();
+  let userProfile: string;
+
+  if (dbProfile) {
+    console.log('[Ollama] Using profile from DB');
+    userProfile = dbProfile;
+  } else {
+    console.log('[Ollama] Using fallback env profile');
+    userProfile =
+      process.env.OLLAMA_USER_PROFILE ??
+      'Senior TypeScript developer interested in remote roles';
+  }
+
   const prompt = buildPrompt(job, userProfile);
 
   try {
