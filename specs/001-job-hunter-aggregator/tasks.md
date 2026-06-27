@@ -155,8 +155,8 @@ description: "Task list for Job Hunter Aggregator — regenerated with Swagger/v
 - [x] T051 [P] Run `pnpm --filter @pl-jobhunter/frontend exec tsc --noEmit` — fix all errors
 - [x] T052 [P] Run `pnpm --filter @pl-jobhunter/backend run test` — all tests green; run `test:coverage`, verify ollama.ts + scrapers > 80% line coverage
 - [x] T053 Add `wallet/` and `.env` to `apps/backend/.gitignore`; verify no secrets tracked
-- [ ] T054 Run `docker build -t pl-jobhunter-backend ./apps/backend` — confirm multi-stage build succeeds
-- [ ] T055 Run `docker compose up -d` from repo root — confirm backend + ollama containers start; `curl localhost:3000/health` returns 200 with valid token
+- [x] T054 Run `docker build -t pl-jobhunter-backend ./apps/backend` — confirm multi-stage build succeeds (NOTE: build context must be repo root: `docker build -f apps/backend/Dockerfile -t pl-jobhunter-backend .`)
+- [x] T055 Run `docker compose up -d` from repo root — confirm backend + ollama containers start; `curl localhost:3000/health` returns 200 with valid token
 - [ ] T056 Run `quickstart.md` full validation — all 8 scenarios (0, 0b, 0c, 1–5) pass
 - [x] T057 [P] Update `specs/001-job-hunter-aggregator/tasks.md` — check all completed boxes; verify no unchecked tasks remain before tagging
 

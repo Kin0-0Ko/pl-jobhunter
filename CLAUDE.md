@@ -55,5 +55,7 @@ See `.spec-kit/tasks/02_tasks.md` for full task matrix. Current state: all tasks
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/001-job-hunter-aggregator/plan.md`.
+at `specs/002-production-readiness/plan.md`.
+
+Previous completed plan: `specs/001-job-hunter-aggregator/plan.md`.
 <!-- SPECKIT END -->
