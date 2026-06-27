@@ -1,5 +1,13 @@
 export type JobStatus = 'NEW' | 'FAVORITE' | 'APPLIED' | 'ARCHIVED';
 
+export interface UserProfile {
+  skills: string[];
+  resume_text: string | null;
+  preferred_contract: 'b2b' | 'uop' | 'both';
+  search_preferences: string | null;
+  updated_at: string;
+}
+
 export interface Job {
   id: string;
   title: string;
