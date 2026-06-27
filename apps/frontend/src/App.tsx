@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useJobs } from './hooks/useJobs.js';
+import { useFilter } from './hooks/useFilter.js';
 import { KanbanBoard } from './components/KanbanBoard.js';
+import { FilterBar } from './components/FilterBar.js';
+import { AnalyticsWidget } from './components/AnalyticsWidget.js';
 import { ProfileForm } from './components/ProfileForm.js';
 import { ErrorState } from './components/ErrorState.js';
 
@@ -8,6 +11,7 @@ type Tab = 'board' | 'profile';
 
 export function App() {
   const { jobs, loading, error, updateStatus } = useJobs();
+  const { filters, setFilters, clearFilters, filteredJobs, topSkills } = useFilter(jobs);
   const [activeTab, setActiveTab] = useState<Tab>('board');
 
   if (loading) {
@@ -50,7 +54,19 @@ export function App() {
         </nav>
       </header>
 
-      {activeTab === 'board' && <KanbanBoard jobs={jobs} updateStatus={updateStatus} />}
+      {activeTab === 'board' && (
+        <>
+          <FilterBar filters={filters} setFilters={setFilters} clearFilters={clearFilters} />
+          <div className="flex gap-4 p-4">
+            <div className="flex-1 min-w-0">
+              <KanbanBoard jobs={filteredJobs} updateStatus={updateStatus} />
+            </div>
+            <div className="flex-shrink-0">
+              <AnalyticsWidget topSkills={topSkills} />
+            </div>
+          </div>
+        </>
+      )}
       {activeTab === 'profile' && <ProfileForm />}
     </div>
   );
