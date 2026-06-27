@@ -1,0 +1,55 @@
+# ==========================================
+#  Dependencies & Package Managers
+# ==========================================
+node_modules/
+.pnpm-store/
+pnpm-debug.log*
+
+# ==========================================
+# ️ Build & Compilation Outputs
+# ==========================================
+dist/
+build/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# ==========================================
+#  Security & Private Credentials (CRITICAL)
+# ==========================================
+.env
+.env.*
+*.local
+# Игнорируем файлы кошелька Oracle DB, чтобы не слить доступы к облаку
+**/wallet/
+**/wallet/*
+*.zip
+*.pem
+
+# ==========================================
+# ️ Operating System Garbage
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+#  IDEs & Editors
+# ==========================================
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# ==========================================
+#  Spec-Kit & Claude Code
+# ==========================================
+!.spec-kit/
+!.spec-kit/**
+!.claude/
+!.claude/**
+!scripts/spec-check.js
