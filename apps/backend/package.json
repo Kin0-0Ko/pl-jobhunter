@@ -19,10 +19,12 @@
     "@pl-jobhunter/shared": "workspace:*",
     "dotenv": "^16.4.0",
     "fastify": "^5.0.0",
+    "node-cron": "^3.0.3",
     "oracledb": "^6.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
     "@types/oracledb": "^7.0.0",
     "@vitest/coverage-v8": "^2.0.0",
     "msw": "^2.0.0",

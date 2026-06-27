@@ -32,6 +32,9 @@ importers:
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
+      node-cron:
+        specifier: ^3.0.3
+        version: 3.0.3
       oracledb:
         specifier: ^6.7.0
         version: 6.10.0
@@ -39,6 +42,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.0
+      '@types/node-cron':
+        specifier: ^3.0.11
+        version: 3.0.11
       '@types/oracledb':
         specifier: ^7.0.0
         version: 7.0.1
@@ -1068,6 +1074,9 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
+  '@types/node-cron@3.0.11':
+    resolution: {integrity: sha512-0ikrnug3/IyneSHqCBeslAhlK2aBfYek1fGo4bP4QnZPmiqSGRK+Oy7ZMisLWkesffJvQ1cqAcBnJC+8+nxIAg==}
+
   '@types/node@22.20.0':
     resolution: {integrity: sha512-QWlFW2wf3nTjC13/DqRnBpR4ZO36VJH/JVBkA/vcnmbTBNQIlnObqyqZE1tUR7+Ni23Lda8R1BxMfbXRpCUx5g==}
 
@@ -1881,6 +1890,10 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  node-cron@3.0.3:
+    resolution: {integrity: sha512-dOal67//nohNgYWb+nWmg5dkFdIwDm8EpeGYMekPMrngV3637lqnX0lbUcCtgibHTz6SEz7DAIjKvKDFYCnO1A==}
+    engines: {node: '>=6.0.0'}
+
   node-releases@2.0.50:
     resolution: {integrity: sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==}
     engines: {node: '>=18'}
@@ -2349,6 +2362,11 @@ packages:
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
+
+  uuid@8.3.2:
+    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+    hasBin: true
 
   validate-npm-package-name@5.0.1:
     resolution: {integrity: sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ==}
@@ -3259,6 +3277,8 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
+  '@types/node-cron@3.0.11': {}
+
   '@types/node@22.20.0':
     dependencies:
       undici-types: 6.21.0
@@ -4134,6 +4154,10 @@ snapshots:
 
   nanoid@3.3.15: {}
 
+  node-cron@3.0.3:
+    dependencies:
+      uuid: 8.3.2
+
   node-releases@2.0.50: {}
 
   npm-package-arg@11.0.3:
@@ -4512,6 +4536,8 @@ snapshots:
       picocolors: 1.1.1
 
   util-deprecate@1.0.2: {}
+
+  uuid@8.3.2: {}
 
   validate-npm-package-name@5.0.1: {}
 
