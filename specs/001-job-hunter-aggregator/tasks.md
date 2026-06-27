@@ -118,16 +118,16 @@ description: "Task list for Job Hunter Aggregator — regenerated with Swagger/v
 
 ### Implementation — US3
 
-- [ ] T037 [P] [US3] Add `node-cron@3` to `apps/backend/package.json` deps; run `pnpm install`
-- [ ] T038 [P] [US3] Create `apps/backend/src/scrapers/justjoin.ts` — fetch `https://justjoin.it/api/offers`, map each offer to `Job` (`source='justjoin'`, id prefix `jj-`); extract salary from `employmentTypes[0]`; skip + log malformed records; export `fetchJustJoin(): Promise<Job[]>`
-- [ ] T039 [P] [US3] Create `apps/backend/src/scrapers/justjoin.test.ts` — msw intercepts `GET https://justjoin.it/api/offers`; asserts correct `Job` normalization for b2b + uop salary; asserts malformed record skipped
-- [ ] T040 [P] [US3] Create `apps/backend/src/scrapers/nofluff.ts` — POST `https://nofluffjobs.com/api/search/posting`, paginate until `totalPages` done; map to `Job` (`source='nofluff'`, id prefix `nf-`); map `salary.type` to b2b/uop; skip + log malformed; export `fetchNoFluff(): Promise<Job[]>`
-- [ ] T041 [P] [US3] Create `apps/backend/src/scrapers/nofluff.test.ts` — msw intercepts POST; asserts pagination consumed; asserts salary mapping correct
-- [ ] T042 [US3] Create `apps/backend/src/ai/ollama.ts` — POST `${OLLAMA_BASE_URL}/api/generate` with `format:"json"` and `OLLAMA_MODEL`; inject `OLLAMA_USER_PROFILE` into prompt; `JSON.parse` response; validate shape; retry once on failure; return `OllamaScoreResult | null`
-- [ ] T043 [P] [US3] Create `apps/backend/src/ai/ollama.test.ts` — msw intercepts `POST http://127.0.0.1:11434/api/generate`; test: valid response parsed; malformed JSON triggers retry; second failure returns null
-- [ ] T044 [US3] Create `apps/backend/src/scheduler/etl.ts` — `runEtl()`: `Promise.all([fetchJustJoin(), fetchNoFluff()])`; for each job: MERGE INTO `jobs` (skip if id exists); if inserted → call `scoreJob()`; if score returned → INSERT `ai_analysis`; if `match_score >= threshold` → call `sendJobAlert()`; handle DB unreachable (abort + fatal log); handle Ollama unavailable (persist job, skip analysis, warn log); export `runEtl`
-- [ ] T045 [US3] Register node-cron in `apps/backend/src/index.ts` — `cron.schedule('0 */6 * * *', runEtl)`; also support `--run-once` CLI flag (`process.argv.includes('--run-once')` → `runEtl().then(process.exit)`)
-- [ ] T046 [P] [US3] Add `"etl:run": "tsx src/scheduler/etl.ts --run-once"` and `"db:init": "tsx src/config/init-db.ts"` scripts to `apps/backend/package.json`
+- [x] T037 [P] [US3] Add `node-cron@3` to `apps/backend/package.json` deps; run `pnpm install`
+- [x] T038 [P] [US3] Create `apps/backend/src/scrapers/justjoin.ts` — fetch `https://justjoin.it/api/offers`, map each offer to `Job` (`source='justjoin'`, id prefix `jj-`); extract salary from `employmentTypes[0]`; skip + log malformed records; export `fetchJustJoin(): Promise<Job[]>`
+- [x] T039 [P] [US3] Create `apps/backend/src/scrapers/justjoin.test.ts` — msw intercepts `GET https://justjoin.it/api/offers`; asserts correct `Job` normalization for b2b + uop salary; asserts malformed record skipped
+- [x] T040 [P] [US3] Create `apps/backend/src/scrapers/nofluff.ts` — POST `https://nofluffjobs.com/api/search/posting`, paginate until `totalPages` done; map to `Job` (`source='nofluff'`, id prefix `nf-`); map `salary.type` to b2b/uop; skip + log malformed; export `fetchNoFluff(): Promise<Job[]>`
+- [x] T041 [P] [US3] Create `apps/backend/src/scrapers/nofluff.test.ts` — msw intercepts POST; asserts pagination consumed; asserts salary mapping correct
+- [x] T042 [US3] Create `apps/backend/src/ai/ollama.ts` — POST `${OLLAMA_BASE_URL}/api/generate` with `format:"json"` and `OLLAMA_MODEL`; inject `OLLAMA_USER_PROFILE` into prompt; `JSON.parse` response; validate shape; retry once on failure; return `OllamaScoreResult | null`
+- [x] T043 [P] [US3] Create `apps/backend/src/ai/ollama.test.ts` — msw intercepts `POST http://127.0.0.1:11434/api/generate`; test: valid response parsed; malformed JSON triggers retry; second failure returns null
+- [x] T044 [US3] Create `apps/backend/src/scheduler/etl.ts` — `runEtl()`: `Promise.all([fetchJustJoin(), fetchNoFluff()])`; for each job: MERGE INTO `jobs` (skip if id exists); if inserted → call `scoreJob()`; if score returned → INSERT `ai_analysis`; if `match_score >= threshold` → call `sendJobAlert()`; handle DB unreachable (abort + fatal log); handle Ollama unavailable (persist job, skip analysis, warn log); export `runEtl`
+- [x] T045 [US3] Register node-cron in `apps/backend/src/index.ts` — `cron.schedule('0 */6 * * *', runEtl)`; also support `--run-once` CLI flag (`process.argv.includes('--run-once')` → `runEtl().then(process.exit)`)
+- [x] T046 [P] [US3] Add `"etl:run": "tsx src/scheduler/etl.ts --run-once"` and `"db:init": "tsx src/config/init-db.ts"` scripts to `apps/backend/package.json`
 
 **Checkpoint**: `pnpm --filter @pl-jobhunter/backend run etl:run` inserts rows in both tables; re-run produces same count. All 4 test files pass.
 

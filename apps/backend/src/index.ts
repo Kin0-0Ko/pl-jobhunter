@@ -3,9 +3,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
+import cron from 'node-cron';
 import { authHook } from './middleware/auth.js';
 import { closePool } from './config/database.js';
 import { jobsRoutes } from './routes/jobs.js';
+import { runEtl } from './scheduler/etl.js';
 
 const server = Fastify({ logger: true });
 
@@ -39,9 +41,18 @@ await server.register(jobsRoutes);
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
 
+if (process.argv.includes('--run-once')) {
+  await runEtl();
+  await closePool();
+  process.exit(0);
+}
+
 try {
   await server.listen({ port, host });
-  // DB pool initialized lazily on first query — wallet not required at startup
+  cron.schedule('0 */6 * * *', () => {
+    runEtl().catch((err) => server.log.error('[ETL] cron error:', err));
+  });
+  server.log.info('[ETL] Cron scheduled: every 6 hours');
 } catch (err) {
   server.log.error(err);
   await closePool();
