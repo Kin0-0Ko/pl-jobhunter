@@ -42,9 +42,9 @@ description: "Task list for Job Hunter Aggregator implementation"
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
 - [x] T003 Add Fastify + @fastify/cors dependencies to `apps/backend/package.json` and run `pnpm install`
-- [ ] T004 Create Fastify server entrypoint `apps/backend/src/index.ts` — register plugins, auth hook, routes, start on `PORT` env var (default 3000)
-- [ ] T005 [P] Create auth middleware `apps/backend/src/middleware/auth.ts` — Fastify preHandler that reads `X-API-TOKEN` header and returns 401 if missing or not equal to `API_TOKEN` env var
-- [ ] T006 [P] Update `apps/backend/.env.example` with all required vars: `DB_USER`, `DB_PASSWORD`, `DB_CONNECTION_STRING`, `TNS_ADMIN`, `API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_USER_PROFILE`, `ALERT_SCORE_THRESHOLD`
+- [x] T004 Create Fastify server entrypoint `apps/backend/src/index.ts` — register plugins, auth hook, routes, start on `PORT` env var (default 3000)
+- [x] T005 [P] Create auth middleware `apps/backend/src/middleware/auth.ts` — Fastify preHandler that reads `X-API-TOKEN` header and returns 401 if missing or not equal to `API_TOKEN` env var
+- [x] T006 [P] Update `apps/backend/.env.example` with all required vars: `DB_USER`, `DB_PASSWORD`, `DB_CONNECTION_STRING`, `TNS_ADMIN`, `API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_USER_PROFILE`, `ALERT_SCORE_THRESHOLD`
 
 **Checkpoint**: `pnpm --filter @pl-jobhunter/backend run dev` starts Fastify; unauthenticated `GET /` returns 401.
 
