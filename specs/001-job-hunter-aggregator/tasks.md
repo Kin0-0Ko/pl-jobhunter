@@ -100,11 +100,11 @@ description: "Task list for Job Hunter Aggregator — regenerated with Swagger/v
 
 ### Implementation — US2
 
-- [ ] T032 [US2] Add `PATCH /api/jobs/:id` handler in `apps/backend/src/routes/jobs.ts` — validate `status` ∈ JobStatus (400 if not), UPDATE `jobs` table, return `{id, status}` (404 if not found); add OpenAPI schema
-- [ ] T033 [P] [US2] Add PATCH tests to `apps/backend/src/routes/jobs.test.ts` — 200 on valid status, 400 on invalid, 404 on unknown id, 401 without token
-- [ ] T034 [US2] Implement drag-and-drop in `apps/frontend/src/components/KanbanBoard.tsx` — `DragEndEvent` calls `updateStatus(id, newColumn)`; optimistic move + rollback on PATCH failure
-- [ ] T035 [P] [US2] Add `useDroppable` to `apps/frontend/src/components/KanbanColumn.tsx` via `@dnd-kit/core`
-- [ ] T036 [P] [US2] Add `useDraggable` to `apps/frontend/src/components/JobCard.tsx` via `@dnd-kit/core`
+- [x] T032 [US2] Add `PATCH /api/jobs/:id` handler in `apps/backend/src/routes/jobs.ts` — validate `status` ∈ JobStatus (400 if not), UPDATE `jobs` table, return `{id, status}` (404 if not found); add OpenAPI schema
+- [x] T033 [P] [US2] Add PATCH tests to `apps/backend/src/routes/jobs.test.ts` — 200 on valid status, 400 on invalid, 404 on unknown id, 401 without token
+- [x] T034 [US2] Implement drag-and-drop in `apps/frontend/src/components/KanbanBoard.tsx` — `DragEndEvent` calls `updateStatus(id, newColumn)`; optimistic move + rollback on PATCH failure
+- [x] T035 [P] [US2] Add `useDroppable` to `apps/frontend/src/components/KanbanColumn.tsx` via `@dnd-kit/core`
+- [x] T036 [P] [US2] Add `useDraggable` to `apps/frontend/src/components/JobCard.tsx` via `@dnd-kit/core`
 
 **Checkpoint**: Drag NEW → FAVORITE; refresh; card stays in FAVORITE. Network off → card snaps back. PATCH tests pass.
 
