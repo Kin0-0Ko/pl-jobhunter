@@ -1,25 +1,25 @@
----
-spec_id: SP-01
-title: Core Architecture and Data Contracts
-version: 1.0.0
-status: APPROVED
----
+# Architecture Reference: SP-01
 
-# SP-01: System Architecture & Tech Stack
+> Migrated from `.specify/specs/01_architecture.md` on 2026-06-27.
+> This document records decisions already implemented in INFRA-101 and INFRA-102.
 
-## 1. System Topology
+## System Topology
+
 - Monorepo Engine: `pnpm` workspaces
 - Backend: Node.js LTS, Fastify, Telegraf (Telegram), node-cron
 - Database: Oracle Autonomous DB (Thin Client connection via Wallet)
-- AI layer: Ollama API (qwen3.5:9b) running on host local loop (127.0.0.1:11434)
-- Frontend: Vite, React, Tailwind CSS deployed to Vercel
+- AI layer: Ollama API (qwen3.5:9b) at `127.0.0.1:11434`
+- Frontend: Vite + React + Tailwind CSS, deployed to Vercel
 
-## 2. Shared Data Contract (packages/shared/src/types.ts)
+## Shared Data Contract
+
+Canonical types live in `packages/shared/src/types.ts`. Reproduced here for reference:
+
 ```typescript
 export type JobStatus = 'NEW' | 'FAVORITE' | 'APPLIED' | 'ARCHIVED';
 
 export interface Job {
-  id: string; 
+  id: string;
   title: string;
   company: string;
   url: string;
@@ -40,10 +40,12 @@ export interface AIAnalysis {
   tech_stack: string[];
   why_good: string;
 }
-
 ```
 
-## 3. Database Schema (Oracle SQL)
+## Oracle SQL Schema
+
+Implemented via `apps/backend/src/config/init-db.ts`:
+
 ```sql
 CREATE TABLE jobs (
     id VARCHAR2(100) PRIMARY KEY,
@@ -70,9 +72,15 @@ CREATE TABLE ai_analysis (
 );
 ```
 
-## 4. API & Security Contracts
-- Protocol: HTTPS via Caddy Reverse Proxy on Oracle VPS.
-- Authentication: Strict Token-based access. Every incoming client request (Vercel) must carry the `X-API-TOKEN` header.
-- Endpoints:
-  - `GET /api/jobs` - Returns all jobs joined with `ai_analysis`, sorted by `match_score DESC`.
-  - `PATCH /api/jobs/:id` - Updates the `status` field of a specific job. Payload: { "status": "JobStatus" }.
+## API Contracts
+
+- `GET /api/jobs` — all jobs joined with `ai_analysis`, sorted by `match_score DESC`
+- `PATCH /api/jobs/:id` — updates `status` field; payload: `{ "status": "JobStatus" }`
+- Auth: `X-API-TOKEN` header required on every request; reject with HTTP 401 if missing/invalid
+
+## Implementation Progress
+
+| Task | Status | Covers |
+|---|---|---|
+| INFRA-101 | DONE | pnpm workspace, packages/shared types |
+| INFRA-102 | DONE | oracledb Thin Mode pool, init-db.ts schema runner |
