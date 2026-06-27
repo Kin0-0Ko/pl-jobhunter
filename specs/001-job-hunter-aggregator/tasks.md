@@ -70,23 +70,23 @@ description: "Task list for Job Hunter Aggregator — regenerated with Swagger/v
 
 ### Implementation — US1
 
-- [ ] T015 [P] [US1] Create `apps/backend/src/routes/jobs.ts` — `GET /api/jobs` handler: LEFT JOIN `jobs` + `ai_analysis` via `getPool()`, ORDER BY `match_score DESC NULLS LAST`, return `JobWithAnalysis[]`; add Fastify JSON schema for OpenAPI generation
-- [ ] T016 [P] [US1] Create `apps/backend/src/routes/jobs.test.ts` — vitest tests for `GET /api/jobs`: mock DB pool with vi.mock, assert 200 + sorted array; assert 401 when no token (via Fastify inject)
-- [ ] T017 [US1] Register `/api/jobs` router in `apps/backend/src/index.ts` — import and register jobs plugin
-- [ ] T018 [P] [US1] Scaffold `apps/frontend/package.json` — add `vite@6`, `react@19`, `react-dom@19`, `tailwindcss@4`, `@dnd-kit/core`, `@dnd-kit/sortable`; set `"type":"module"`; add `dev`, `build`, `preview` scripts
-- [ ] T019 [P] [US1] Create `apps/frontend/tsconfig.json` extending `../../tsconfig.base.json` with `"jsx":"react-jsx"`, `"outDir":"./dist"`, `"rootDir":"./src"`
-- [ ] T020 [P] [US1] Create `apps/frontend/vite.config.ts` — `@vitejs/plugin-react`, proxy `/api` → `VITE_API_BASE_URL` (default `http://localhost:3000`)
-- [ ] T021 [P] [US1] Create `apps/frontend/index.html` — Vite entry HTML with `<div id="root">` and `<script type="module" src="/src/main.tsx">`
-- [ ] T022 [P] [US1] Create `apps/frontend/src/api/client.ts` — typed fetch wrapper injecting `X-API-TOKEN` from `import.meta.env.VITE_API_TOKEN`; exports `getJobs(): Promise<JobWithAnalysis[]>` and `patchJobStatus(id: string, status: JobStatus): Promise<void>`
-- [ ] T023 [P] [US1] Create `apps/frontend/src/hooks/useJobs.ts` — fetches jobs on mount; exposes `jobs`, `loading`, `error`; `updateStatus(id, status)` with optimistic update + rollback on failure
-- [ ] T024 [US1] Create `apps/frontend/src/components/JobCard.tsx` — renders title, company, source badge (`justjoin` / `nofluff`), salary range (B2B / UoP), match score chip, external link; accepts `JobWithAnalysis` prop
-- [ ] T025 [US1] Create `apps/frontend/src/components/KanbanColumn.tsx` — column header + `JobCard` list for one `JobStatus`; accepts `status: JobStatus`, `jobs: JobWithAnalysis[]`
-- [ ] T026 [US1] Create `apps/frontend/src/components/KanbanBoard.tsx` — 4 `KanbanColumn` instances (NEW, FAVORITE, APPLIED, ARCHIVED) fed from `useJobs`; wraps in `@dnd-kit/core` `DndContext`
-- [ ] T027 [US1] Create `apps/frontend/src/components/ErrorState.tsx` — renders human-readable message on 401 / network error
-- [ ] T028 [US1] Create `apps/frontend/src/App.tsx` — renders `KanbanBoard`; shows `ErrorState` on auth/network failure
-- [ ] T029 [US1] Create `apps/frontend/src/main.tsx` — React root mount with `createRoot`; imports Tailwind base CSS
-- [ ] T030 [P] [US1] Create `apps/frontend/.env.example` — `VITE_API_TOKEN=` and `VITE_API_BASE_URL=http://localhost:3000`
-- [ ] T031 [P] [US1] Add `apps/frontend` to `pnpm-workspace.yaml`; run `pnpm install` from root
+- [x] T015 [P] [US1] Create `apps/backend/src/routes/jobs.ts` — `GET /api/jobs` handler: LEFT JOIN `jobs` + `ai_analysis` via `getPool()`, ORDER BY `match_score DESC NULLS LAST`, return `JobWithAnalysis[]`; add Fastify JSON schema for OpenAPI generation
+- [x] T016 [P] [US1] Create `apps/backend/src/routes/jobs.test.ts` — vitest tests for `GET /api/jobs`: mock DB pool with vi.mock, assert 200 + sorted array; assert 401 when no token (via Fastify inject)
+- [x] T017 [US1] Register `/api/jobs` router in `apps/backend/src/index.ts` — import and register jobs plugin
+- [x] T018 [P] [US1] Scaffold `apps/frontend/package.json` — add `vite@6`, `react@19`, `react-dom@19`, `tailwindcss@4`, `@dnd-kit/core`, `@dnd-kit/sortable`; set `"type":"module"`; add `dev`, `build`, `preview` scripts
+- [x] T019 [P] [US1] Create `apps/frontend/tsconfig.json` extending `../../tsconfig.base.json` with `"jsx":"react-jsx"`, `"outDir":"./dist"`, `"rootDir":"./src"`
+- [x] T020 [P] [US1] Create `apps/frontend/vite.config.ts` — `@vitejs/plugin-react`, proxy `/api` → `VITE_API_BASE_URL` (default `http://localhost:3000`)
+- [x] T021 [P] [US1] Create `apps/frontend/index.html` — Vite entry HTML with `<div id="root">` and `<script type="module" src="/src/main.tsx">`
+- [x] T022 [P] [US1] Create `apps/frontend/src/api/client.ts` — typed fetch wrapper injecting `X-API-TOKEN` from `import.meta.env.VITE_API_TOKEN`; exports `getJobs(): Promise<JobWithAnalysis[]>` and `patchJobStatus(id: string, status: JobStatus): Promise<void>`
+- [x] T023 [P] [US1] Create `apps/frontend/src/hooks/useJobs.ts` — fetches jobs on mount; exposes `jobs`, `loading`, `error`; `updateStatus(id, status)` with optimistic update + rollback on failure
+- [x] T024 [US1] Create `apps/frontend/src/components/JobCard.tsx` — renders title, company, source badge (`justjoin` / `nofluff`), salary range (B2B / UoP), match score chip, external link; accepts `JobWithAnalysis` prop
+- [x] T025 [US1] Create `apps/frontend/src/components/KanbanColumn.tsx` — column header + `JobCard` list for one `JobStatus`; accepts `status: JobStatus`, `jobs: JobWithAnalysis[]`
+- [x] T026 [US1] Create `apps/frontend/src/components/KanbanBoard.tsx` — 4 `KanbanColumn` instances (NEW, FAVORITE, APPLIED, ARCHIVED) fed from `useJobs`; wraps in `@dnd-kit/core` `DndContext`
+- [x] T027 [US1] Create `apps/frontend/src/components/ErrorState.tsx` — renders human-readable message on 401 / network error
+- [x] T028 [US1] Create `apps/frontend/src/App.tsx` — renders `KanbanBoard`; shows `ErrorState` on auth/network failure
+- [x] T029 [US1] Create `apps/frontend/src/main.tsx` — React root mount with `createRoot`; imports Tailwind base CSS
+- [x] T030 [P] [US1] Create `apps/frontend/.env.example` — `VITE_API_TOKEN=` and `VITE_API_BASE_URL=http://localhost:3000`
+- [x] T031 [P] [US1] Add `apps/frontend` to `pnpm-workspace.yaml`; run `pnpm install` from root
 
 **Checkpoint**: `pnpm --filter @pl-jobhunter/frontend run dev` opens board; seeded DB rows appear in correct columns sorted by score; missing token shows error state. Route test passes.
 

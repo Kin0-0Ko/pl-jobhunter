@@ -22,3 +22,10 @@ export interface AIAnalysis {
   tech_stack: string[];
   why_good: string;
 }
+
+export type JobWithAnalysis = Job & {
+  match_score: number | null;
+  summary: string | null;
+  tech_stack: string[] | null;
+  why_good: string | null;
+};

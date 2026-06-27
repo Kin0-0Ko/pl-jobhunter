@@ -1,1 +1,1 @@
-export type { JobStatus, Job, AIAnalysis } from './types.js';
+export type { JobStatus, Job, AIAnalysis, JobWithAnalysis } from './types.js';

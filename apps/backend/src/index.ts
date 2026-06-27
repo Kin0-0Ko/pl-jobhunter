@@ -5,6 +5,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { authHook } from './middleware/auth.js';
 import { closePool } from './config/database.js';
+import { jobsRoutes } from './routes/jobs.js';
 
 const server = Fastify({ logger: true });
 
@@ -32,6 +33,8 @@ server.addHook('preHandler', authHook);
 server.get('/health', {
   schema: { response: { 200: { type: 'object', properties: { status: { type: 'string' } } } } },
 }, async () => ({ status: 'ok' }));
+
+await server.register(jobsRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
