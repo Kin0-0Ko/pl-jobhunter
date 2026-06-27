@@ -1,16 +1,19 @@
 import 'dotenv/config';
+import { randomUUID } from 'crypto';
+import pino from 'pino';
 import { getPool } from '../config/database.js';
 import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { scoreJob } from '../ai/ollama.js';
-import { sendJobAlert } from '../bot/telegram.js';
+import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 async function mergeJob(job: Job): Promise<boolean> {
   const pool = await getPool();
   const conn = await pool.getConnection();
   try {
-    // MERGE: insert only if id doesn't exist
     const result = await conn.execute(
       `MERGE INTO jobs dst
        USING (SELECT :id AS id FROM dual) src
@@ -40,7 +43,7 @@ async function mergeJob(job: Job): Promise<boolean> {
         status: job.status,
         created_at: job.created_at,
       },
-      { autoCommit: true }
+      { autoCommit: true },
     );
     return (result.rowsAffected ?? 0) > 0;
   } finally {
@@ -53,7 +56,7 @@ async function persistAnalysis(
   score: number,
   summary: string,
   techStack: string[],
-  whyGood: string
+  whyGood: string,
 ): Promise<void> {
   const pool = await getPool();
   const conn = await pool.getConnection();
@@ -71,7 +74,7 @@ async function persistAnalysis(
         tech_stack: JSON.stringify(techStack),
         why_good: whyGood,
       },
-      { autoCommit: true }
+      { autoCommit: true },
     );
   } finally {
     await conn.close();
@@ -79,61 +82,79 @@ async function persistAnalysis(
 }
 
 export async function runEtl(): Promise<void> {
-  console.log('[ETL] Starting run at', new Date().toISOString());
+  const etl_run_id = randomUUID();
+  logger.info({ etl_run_id }, '[ETL] Starting run');
 
-  let jobs: Job[];
   try {
-    const [jjJobs, nfJobs] = await Promise.all([fetchJustJoin(), fetchNoFluff()]);
-    jobs = [...jjJobs, ...nfJobs];
-    console.log(`[ETL] Fetched ${jobs.length} jobs (JJ: ${jjJobs.length}, NF: ${nfJobs.length})`);
-  } catch (err) {
-    console.error('[ETL] Scraper error — aborting:', err);
-    process.exitCode = 1;
-    return;
-  }
-
-  let inserted = 0;
-  let scored = 0;
-  const threshold = Number(process.env.ALERT_SCORE_THRESHOLD ?? 80);
-
-  for (const job of jobs) {
-    let wasInserted: boolean;
+    let jobs: Job[];
     try {
-      wasInserted = await mergeJob(job);
+      const [jjJobs, nfJobs] = await Promise.all([fetchJustJoin(), fetchNoFluff()]);
+      jobs = [...jjJobs, ...nfJobs];
+      logger.info({ etl_run_id, total: jobs.length, justjoin: jjJobs.length, nofluff: nfJobs.length }, '[ETL] Fetched jobs');
     } catch (err) {
-      console.error('[ETL] DB unreachable, aborting ETL:', err);
+      const error = err instanceof Error ? err : new Error(String(err));
+      logger.error({ etl_run_id, err: error.message }, '[ETL] Scraper error — aborting');
+      await sendCriticalAlert('justjoin+nofluff', error);
       process.exitCode = 1;
       return;
     }
 
-    if (!wasInserted) continue;
-    inserted++;
+    let inserted = 0;
+    let scored = 0;
+    const threshold = Number(process.env.ALERT_SCORE_THRESHOLD ?? 80);
 
-    const analysis = await scoreJob(job);
-    if (!analysis) {
-      console.warn(`[ETL] Ollama unavailable for job ${job.id} — persisted without score`);
-      continue;
-    }
-
-    try {
-      await persistAnalysis(
-        job.id,
-        analysis.match_score,
-        analysis.summary,
-        analysis.tech_stack,
-        analysis.why_good
-      );
-      scored++;
-
-      if (analysis.match_score >= threshold) {
-        await sendJobAlert(job, analysis.match_score);
+    for (const job of jobs) {
+      let wasInserted: boolean;
+      try {
+        wasInserted = await mergeJob(job);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.error({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] DB error — aborting');
+        await sendCriticalAlert('oracle', error);
+        process.exitCode = 1;
+        return;
       }
-    } catch (err) {
-      console.warn(`[ETL] Failed to persist analysis for ${job.id}:`, err);
-    }
-  }
 
-  console.log(`[ETL] Done — inserted: ${inserted}, scored: ${scored}`);
+      if (!wasInserted) continue;
+      inserted++;
+
+      let analysis;
+      try {
+        analysis = await scoreJob(job);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.warn({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] Ollama threw — persisting without score');
+        await sendOllamaWarning(job.id, error);
+        continue;
+      }
+
+      if (!analysis) {
+        const error = new Error('scoreJob returned null');
+        logger.warn({ etl_run_id, job_id: job.id }, '[ETL] Ollama returned null — persisting without score');
+        await sendOllamaWarning(job.id, error);
+        continue;
+      }
+
+      try {
+        await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
+        scored++;
+        logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score }, '[ETL] Scored job');
+
+        if (analysis.match_score >= threshold) {
+          await sendJobAlert(job, analysis.match_score);
+        }
+      } catch (err) {
+        logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
+      }
+    }
+
+    logger.info({ etl_run_id, inserted, scored }, '[ETL] Run complete');
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    logger.error({ etl_run_id, err: error.message }, '[ETL] Unexpected error');
+    await sendCriticalAlert('etl-orchestrator', error);
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv.includes('--run-once')) {

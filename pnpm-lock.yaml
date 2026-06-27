@@ -38,6 +38,9 @@ importers:
       oracledb:
         specifier: ^6.7.0
         version: 6.10.0
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
       telegraf:
         specifier: ^4.16.3
         version: 4.16.3(supports-color@8.1.1)
