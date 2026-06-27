@@ -29,6 +29,51 @@ ALERT_SCORE_THRESHOLD=80
 
 ---
 
+## Scenario 0: Unit Tests (no wallet, no Ollama needed)
+
+```bash
+pnpm --filter @pl-jobhunter/backend run test
+```
+
+**Expected**: All vitest tests pass. Ollama HTTP calls are intercepted by msw — no real
+Ollama process required. Output: `✓ N tests passed`.
+
+```bash
+pnpm --filter @pl-jobhunter/backend run test:coverage
+```
+
+**Expected**: Coverage report generated; key modules (ollama.ts, scrapers) > 80% line coverage.
+
+---
+
+## Scenario 0b: Swagger UI (dev mode)
+
+Start backend: `pnpm --filter @pl-jobhunter/backend run dev`
+
+Open `http://localhost:3000/docs` in browser.
+
+**Expected**: Swagger UI renders with `GET /api/jobs` and `PATCH /api/jobs/:id` endpoints
+documented. Auth header field visible. Requests executable from UI.
+
+---
+
+## Scenario 0c: Docker Build
+
+```bash
+docker build -t pl-jobhunter-backend ./apps/backend
+```
+
+**Expected**: Build completes in two stages; final image based on `node:22-alpine`.
+
+```bash
+docker compose up -d
+```
+
+**Expected**: `backend` and `ollama` containers start. Backend reachable at `http://localhost:3000`.
+Ollama reachable at `http://localhost:11434`.
+
+---
+
 ## Scenario 1: Database Schema Initialization
 
 ```bash
