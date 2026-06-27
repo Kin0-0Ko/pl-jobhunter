@@ -32,9 +32,9 @@ description: "Task list for Production Readiness — Dynamic Profile, Filtering/
 
 **⚠️ CRITICAL**: Complete before any Phase 9–11 work.
 
-- [ ] T058 Add `UserProfile` interface to `packages/shared/src/types.ts` — fields: `skills: string[]`, `resume_text: string | null`, `preferred_contract: 'b2b' | 'uop' | 'both'`, `search_preferences: string | null`, `updated_at: string`
-- [ ] T059 Add `user_profile` table DDL to `apps/backend/src/config/init-db.ts` — `CREATE TABLE user_profile (id NUMBER DEFAULT 1 NOT NULL, skills CLOB NOT NULL, resume_text CLOB, preferred_contract VARCHAR2(10) DEFAULT 'both' NOT NULL, search_preferences CLOB, updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL, CONSTRAINT pk_user_profile PRIMARY KEY (id), CONSTRAINT chk_contract CHECK (preferred_contract IN ('b2b','uop','both')))` — use `EXECUTE IMMEDIATE` with `ORA-00955` guard (same pattern as existing tables)
-- [ ] T060 [P] Configure pino structured logging in `apps/backend/src/index.ts` — run `pnpm --filter @pl-jobhunter/backend add -D pino-pretty`; replace `Fastify({ logger: true })` with `Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined } })`
+- [x] T058 Add `UserProfile` interface to `packages/shared/src/types.ts` — fields: `skills: string[]`, `resume_text: string | null`, `preferred_contract: 'b2b' | 'uop' | 'both'`, `search_preferences: string | null`, `updated_at: string`
+- [x] T059 Add `user_profile` table DDL to `apps/backend/src/config/init-db.ts` — `CREATE TABLE user_profile (id NUMBER DEFAULT 1 NOT NULL, skills CLOB NOT NULL, resume_text CLOB, preferred_contract VARCHAR2(10) DEFAULT 'both' NOT NULL, search_preferences CLOB, updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL, CONSTRAINT pk_user_profile PRIMARY KEY (id), CONSTRAINT chk_contract CHECK (preferred_contract IN ('b2b','uop','both')))` — use `EXECUTE IMMEDIATE` with `ORA-00955` guard (same pattern as existing tables)
+- [x] T060 [P] Configure pino structured logging in `apps/backend/src/index.ts` — run `pnpm --filter @pl-jobhunter/backend add -D pino-pretty`; replace `Fastify({ logger: true })` with `Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', transport: process.env.NODE_ENV !== 'production' ? { target: 'pino-pretty' } : undefined } })`
 
 **Checkpoint**: `UserProfile` type importable; `db:init` creates `user_profile` table; backend logs emit structured JSON in production mode.
 

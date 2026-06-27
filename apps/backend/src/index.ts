@@ -9,7 +9,14 @@ import { closePool } from './config/database.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { runEtl } from './scheduler/etl.js';
 
-const server = Fastify({ logger: true });
+const server = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    transport: process.env.NODE_ENV !== 'production'
+      ? { target: 'pino-pretty' }
+      : undefined,
+  },
+});
 
 await server.register(cors, {
   origin: process.env.CORS_ORIGIN ?? '*',
