@@ -96,12 +96,12 @@ description: "Task list for Production Readiness — Dynamic Profile, Filtering/
 
 ## Phase 12: Polish & Cross-Cutting
 
-- [ ] T076 [P] Run `pnpm --filter @pl-jobhunter/backend exec tsc --noEmit` — fix any type errors introduced by profile route, ollama.ts changes, etl.ts changes
-- [ ] T077 [P] Run `pnpm --filter @pl-jobhunter/frontend exec tsc --noEmit` — fix any type errors in FilterBar, AnalyticsWidget, ProfileForm, useFilter, useProfile, App.tsx
-- [ ] T078 [P] Run `pnpm --filter @pl-jobhunter/backend run test` — all tests green (profile route tests + Telegram alert tests + existing 20 tests)
-- [ ] T079 [P] Update `apps/backend/.env.example` — add `LOG_LEVEL=info` and `PINO_PRETTY=true` (dev hint) if not already present
+- [x] T076 [P] Run `pnpm --filter @pl-jobhunter/backend exec tsc --noEmit` — fix any type errors introduced by profile route, ollama.ts changes, etl.ts changes
+- [x] T077 [P] Run `pnpm --filter @pl-jobhunter/frontend exec tsc --noEmit` — fix any type errors in FilterBar, AnalyticsWidget, ProfileForm, useFilter, useProfile, App.tsx
+- [x] T078 [P] Run `pnpm --filter @pl-jobhunter/backend run test` — all tests green (profile route tests + Telegram alert tests + existing 20 tests)
+- [x] T079 [P] Update `apps/backend/.env.example` — add `LOG_LEVEL=info` and `PINO_PRETTY=true` (dev hint) if not already present
 - [ ] T080 [P] Run `quickstart.md` full validation — all P1–P4 scenarios pass against live backend + Oracle + Ollama
-- [ ] T081 [P] Update `specs/002-production-readiness/tasks.md` — mark all completed boxes; verify no unchecked tasks remain
+- [x] T081 [P] Update `specs/002-production-readiness/tasks.md` — mark all completed boxes; verify no unchecked tasks remain
 
 ---
 
