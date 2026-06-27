@@ -7,6 +7,7 @@ import cron from 'node-cron';
 import { authHook } from './middleware/auth.js';
 import { closePool } from './config/database.js';
 import { jobsRoutes } from './routes/jobs.js';
+import { profileRoutes } from './routes/profile.js';
 import { runEtl } from './scheduler/etl.js';
 
 const server = Fastify({
@@ -44,6 +45,7 @@ server.get('/health', {
 }, async () => ({ status: 'ok' }));
 
 await server.register(jobsRoutes);
+await server.register(profileRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
