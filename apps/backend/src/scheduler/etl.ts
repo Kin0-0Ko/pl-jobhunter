@@ -3,6 +3,7 @@ import { getPool } from '../config/database.js';
 import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { scoreJob } from '../ai/ollama.js';
+import { sendJobAlert } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
 
 async function mergeJob(job: Job): Promise<boolean> {
@@ -125,8 +126,7 @@ export async function runEtl(): Promise<void> {
       scored++;
 
       if (analysis.match_score >= threshold) {
-        // Telegram alert wired in Phase 6 (T049)
-        console.log(`[ETL] High-match job: ${job.title} @ ${job.company} (score: ${analysis.match_score})`);
+        await sendJobAlert(job, analysis.match_score);
       }
     } catch (err) {
       console.warn(`[ETL] Failed to persist analysis for ${job.id}:`, err);
