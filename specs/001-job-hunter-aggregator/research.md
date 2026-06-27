@@ -109,6 +109,89 @@ race conditions). Oracle MERGE is the standard upsert mechanism.
 
 ---
 
+## Decision 8: API Documentation — Fastify Swagger
+
+**Decision**: `@fastify/swagger` (OpenAPI 3.0 schema generation) + `@fastify/swagger-ui` (Swagger
+UI at `/docs`). Both registered in `apps/backend/src/index.ts` before route registration.
+
+**Rationale**: Native Fastify plugins — zero friction with the existing server. OpenAPI schema
+auto-derived from Fastify's JSON Schema route definitions. No separate spec file to maintain.
+Available only in non-production (`NODE_ENV !== 'production'`) to avoid exposing internals.
+
+**Alternatives considered**:
+- `swagger-jsdoc` — requires JSDoc comments; incompatible with Fastify's schema-first approach.
+- Manual OpenAPI YAML — too much maintenance burden.
+
+**Config**:
+```typescript
+// Only register in dev/staging
+if (process.env.NODE_ENV !== 'production') {
+  await server.register(swagger, { openapi: { info: { title: 'PL-JobHunter API', version: '1.0.0' } } });
+  await server.register(swaggerUi, { routePrefix: '/docs' });
+}
+```
+
+---
+
+## Decision 9: Unit Testing — vitest + msw
+
+**Decision**: `vitest@2` as test runner (Jest-compatible API, native ESM, fast). `msw@2`
+(Mock Service Worker) for intercepting Ollama HTTP calls at the network level — no dependency
+injection or mock functions needed in production code.
+
+**Rationale**: vitest runs in Node environment with ESM natively — no Babel transform. msw's
+`http.post()` handlers intercept `fetch()` calls without modifying `ollama.ts` itself.
+Tests are colocated (`*.test.ts`) so they stay close to the module they test.
+
+**Test scope**:
+- `ollama.test.ts` — mocks `POST /api/generate`, verifies parse + retry logic
+- `justjoin.test.ts` — mocks JustJoin API response, verifies Job normalization
+- `nofluff.test.ts` — mocks NoFluffJobs pagination, verifies Job normalization
+- `jobs.test.ts` — tests Fastify route handlers with injected mock DB connection
+
+**Config** (`apps/backend/vitest.config.ts`):
+```typescript
+import { defineConfig } from 'vitest/config';
+export default defineConfig({ test: { environment: 'node', include: ['src/**/*.test.ts'] } });
+```
+
+**Alternatives considered**:
+- Jest — requires `ts-jest` transform config; slower on ESM projects.
+- `@playwright/test` — overkill for unit/integration layer.
+
+---
+
+## Decision 10: Docker + docker-compose + CI/CD
+
+**Decision**:
+
+**Dockerfile** (`apps/backend/Dockerfile`) — two stages:
+1. `builder`: `node:22-alpine`, copies workspace, runs `pnpm install --frozen-lockfile`,
+   runs `pnpm exec tsc` → outputs `dist/`
+2. `runner`: `node:22-alpine`, copies `dist/` + `node_modules/` (prod only via
+   `pnpm deploy`), sets `CMD ["node", "dist/index.js"]`
+
+**docker-compose.yml** (repo root) — two services:
+- `backend`: built from `apps/backend/Dockerfile`, env_file `apps/backend/.env`,
+  mounts `./apps/backend/wallet:/app/wallet:ro`, port `3000:3000`
+- `ollama`: image `ollama/ollama`, volume `ollama_models:/root/.ollama`, port `11434:11434`
+
+**GitHub Actions** (`.github/workflows/ci.yml`):
+- `ci` job: `ubuntu-latest`, Node 22, pnpm install, `tsc --noEmit`, `vitest run`
+- `deploy` job (on push to `main`): docker buildx + push to GHCR, SSH into Oracle VPS,
+  `docker compose pull && docker compose up -d`
+
+**Rationale**: Multi-stage keeps final image small (no dev deps, no TypeScript compiler).
+docker-compose lets local dev spin up Ollama alongside backend without manual `ollama serve`.
+GitHub Actions on GHCR is free for public repos and integrates with the existing git workflow.
+
+**Alternatives considered**:
+- Single-stage Dockerfile — final image 3× larger (includes tsc, tsx, @types).
+- Self-hosted runner — unnecessary complexity for single-VPS deploy.
+- Podman — no added value over Docker for this setup.
+
+---
+
 ## Decision 7: Telegram Bot
 
 **Decision**: Use `telegraf@4` in webhook-less polling mode (no webhook URL needed on VPS).

@@ -18,14 +18,19 @@ Fastify REST API protected by `X-API-TOKEN` auth.
 **Language/Version**: TypeScript 5.7, Node.js 22 LTS — ESM (`"type": "module"`) throughout
 
 **Primary Dependencies**:
-- Backend: `fastify@5`, `@fastify/cors`, `telegraf@4`, `node-cron@3`, `oracledb@6`
+- Backend: `fastify@5`, `@fastify/cors`, `@fastify/swagger`, `@fastify/swagger-ui`,
+  `telegraf@4`, `node-cron@3`, `oracledb@6`
+- Backend (dev): `vitest@2`, `@vitest/coverage-v8`, `msw@2`
 - Frontend: `vite@6`, `react@19`, `tailwindcss@4`, `@dnd-kit/core`, `@dnd-kit/sortable`
 - Shared: `packages/shared` — `Job`, `AIAnalysis`, `JobStatus` (source of truth)
+- CI/CD: GitHub Actions, Docker (multi-stage), docker-compose
 
 **Storage**: Oracle Autonomous DB — tables `jobs` + `ai_analysis` already created via
 `apps/backend/src/config/init-db.ts`. Wallet auth via `TNS_ADMIN=./wallet`.
 
-**Testing**: Manual integration validation via `quickstart.md`; no automated test suite in v1.
+**Testing**: `vitest@2` for backend unit tests — Ollama HTTP calls mocked via `msw@2` so tests
+run without local Ollama or Oracle wallet. Test files colocated at `apps/backend/src/**/*.test.ts`.
+Manual end-to-end validation via `quickstart.md`.
 
 **Target Platform**: Oracle VPS (Linux x64), Caddy reverse proxy for HTTPS/SSL; frontend on
 Vercel (static SPA).
@@ -74,6 +79,10 @@ specs/001-job-hunter-aggregator/
 ### Source Code (repository root)
 
 ```text
+.github/
+└── workflows/
+    └── ci.yml                # Install → tsc → vitest → docker build + deploy
+
 packages/
 └── shared/
     └── src/
@@ -87,21 +96,26 @@ apps/
 │   │   │   ├── database.ts   # oracledb pool              ← DONE (INFRA-102)
 │   │   │   └── init-db.ts    # schema runner              ← DONE (INFRA-102)
 │   │   ├── middleware/
-│   │   │   └── auth.ts       # X-API-TOKEN preHandler
+│   │   │   └── auth.ts       # X-API-TOKEN preHandler     ← DONE (T005)
 │   │   ├── scrapers/
 │   │   │   ├── justjoin.ts   # JustJoin.it fetcher + normalizer
-│   │   │   └── nofluff.ts    # NoFluffJobs fetcher + normalizer
+│   │   │   ├── justjoin.test.ts
+│   │   │   ├── nofluff.ts    # NoFluffJobs fetcher + normalizer
+│   │   │   └── nofluff.test.ts
 │   │   ├── ai/
-│   │   │   └── ollama.ts     # Ollama JSON-mode scorer
+│   │   │   ├── ollama.ts     # Ollama JSON-mode scorer
+│   │   │   └── ollama.test.ts  # msw mocks Ollama HTTP
 │   │   ├── bot/
 │   │   │   └── telegram.ts   # Telegraf alert dispatcher
 │   │   ├── routes/
-│   │   │   └── jobs.ts       # GET /api/jobs, PATCH /api/jobs/:id
+│   │   │   ├── jobs.ts       # GET /api/jobs, PATCH /api/jobs/:id
+│   │   │   └── jobs.test.ts
 │   │   ├── scheduler/
 │   │   │   └── etl.ts        # node-cron 6h cycle
-│   │   └── index.ts          # Fastify server entrypoint
+│   │   └── index.ts          # Fastify server entrypoint  ← DONE (T004)
 │   ├── wallet/               # Oracle wallet files (gitignored)
-│   └── .env.example
+│   ├── Dockerfile            # Multi-stage: builder (tsc) + runner (alpine)
+│   └── .env.example          ← DONE (T006)
 └── frontend/
     └── src/
         ├── api/
@@ -129,7 +143,10 @@ Backend is ESM Node process; frontend is Vite SPA deployed separately to Vercel.
 | Phase | Task IDs | Description | Blocked By |
 |---|---|---|---|
 | 1 — Infra (DONE) | INFRA-101, INFRA-102 | Workspace + shared types + DB pool | — |
-| 2 — Container + Auth | INFRA-103 | Docker + Caddy; Fastify entrypoint + auth hook | INFRA-102 |
-| 3 — Scrapers | BE-201, BE-202 | JustJoin.it + NoFluffJobs ETL | INFRA-102 |
-| 4 — AI + Bot + API | BE-203, BE-204, BE-205 | Ollama scorer + cron + routes + Telegram | BE-201, BE-202 |
-| 5 — Frontend | FE-301, FE-302, FE-303 | React Kanban + drag-drop + tax calc | BE-204 |
+| 2 — Foundation (DONE) | T003–T006 | Fastify + CORS + auth + .env.example | INFRA-102 |
+| 2b — Dev Tooling | T007–T014 | Swagger/UI, vitest + msw setup, Dockerfile, CI workflow | T004 |
+| 3 — API Routes | T011–T012 | GET /api/jobs + PATCH /api/jobs/:id + route tests | T007–T010 |
+| 4 — Scrapers | T013–T014 | JustJoin.it + NoFluffJobs ETL + unit tests | T011 |
+| 5 — AI + Bot + Scheduler | T015–T018 | Ollama scorer (mocked tests) + Telegram + cron | T013–T014 |
+| 6 — Frontend | T019–T027 | React Kanban + drag-drop + tax calc | T011 |
+| 7 — Polish | T028–T032 | Docker compose, full build, e2e validation | All |

@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { authHook } from './middleware/auth.js';
 import { closePool } from './config/database.js';
 
@@ -10,9 +12,26 @@ await server.register(cors, {
   origin: process.env.CORS_ORIGIN ?? '*',
 });
 
+if (process.env.NODE_ENV !== 'production') {
+  await server.register(swagger, {
+    openapi: {
+      info: { title: 'PL-JobHunter API', version: '1.0.0' },
+      components: {
+        securitySchemes: {
+          apiToken: { type: 'apiKey', in: 'header', name: 'x-api-token' },
+        },
+      },
+      security: [{ apiToken: [] }],
+    },
+  });
+  await server.register(swaggerUi, { routePrefix: '/docs' });
+}
+
 server.addHook('preHandler', authHook);
 
-server.get('/health', async () => ({ status: 'ok' }));
+server.get('/health', {
+  schema: { response: { 200: { type: 'object', properties: { status: { type: 'string' } } } } },
+}, async () => ({ status: 'ok' }));
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';

@@ -7,10 +7,15 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "db:init": "tsx src/config/init-db.ts"
+    "db:init": "tsx src/config/init-db.ts",
+    "etl:run": "tsx src/scheduler/etl.ts --run-once",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
     "dotenv": "^16.4.0",
     "fastify": "^5.0.0",
     "oracledb": "^6.7.0"
@@ -18,7 +23,10 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/oracledb": "^7.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "msw": "^2.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^2.0.0"
   }
 }
