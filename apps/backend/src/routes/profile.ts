@@ -44,11 +44,13 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
           : typeof rawSkills === 'string'
             ? (JSON.parse(rawSkills) as string[])
             : [];
+        const resumeText = row['RESUME_TEXT'];
+        const searchPrefs = row['SEARCH_PREFERENCES'];
         return reply.send({
           skills,
-          resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
+          resume_text: resumeText != null ? String(resumeText) : null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
-          search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,
+          search_preferences: searchPrefs != null ? String(searchPrefs) : null,
           updated_at: (row['UPDATED_AT'] as Date).toISOString(),
         });
       } finally {
@@ -134,11 +136,13 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
           : typeof rawSkills2 === 'string'
             ? (JSON.parse(rawSkills2) as string[])
             : [];
+        const resumeText2 = row['RESUME_TEXT'];
+        const searchPrefs2 = row['SEARCH_PREFERENCES'];
         return reply.send({
           skills: skills2,
-          resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
+          resume_text: resumeText2 != null ? String(resumeText2) : null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
-          search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,
+          search_preferences: searchPrefs2 != null ? String(searchPrefs2) : null,
           updated_at: (row['UPDATED_AT'] as Date).toISOString(),
         });
       } finally {
