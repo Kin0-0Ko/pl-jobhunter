@@ -13,6 +13,7 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -31,8 +32,8 @@ jobs:
       - name: Security audit
         run: pnpm audit --audit-level=high
 
-      - name: Type check shared
-        run: pnpm --filter @pl-jobhunter/shared exec tsc --noEmit
+      - name: Build shared
+        run: pnpm --filter @pl-jobhunter/shared build
 
       - name: Type check backend
         run: pnpm --filter @pl-jobhunter/backend exec tsc --noEmit
