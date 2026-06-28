@@ -22,7 +22,10 @@ export async function createPool(): Promise<oracledb.Pool> {
 let pool: oracledb.Pool | null = null;
 
 export async function getPool(): Promise<oracledb.Pool> {
-  if (!pool) pool = await createPool();
+  if (pool) {
+    return pool;
+  }
+  pool = await createPool();
   return pool;
 }
 

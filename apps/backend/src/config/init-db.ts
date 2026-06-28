@@ -1,5 +1,8 @@
 import 'dotenv/config';
+import pino from 'pino';
 import { getPool, closePool } from './database.js';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 const CREATE_JOBS = `
   CREATE TABLE jobs (
@@ -45,11 +48,11 @@ const CREATE_USER_PROFILE = `
 async function runStatement(conn: import('oracledb').Connection, sql: string, label: string): Promise<void> {
   try {
     await conn.execute(sql);
-    console.log(`[init-db] Created table: ${label}`);
+    logger.info({ table: label }, 'init-db: created table');
   } catch (err: unknown) {
     const ora = err as { errorNum?: number; message?: string };
     if (ora.errorNum === 955) {
-      console.log(`[init-db] Table already exists, skipping: ${label}`);
+      logger.info({ table: label }, 'init-db: table already exists, skipping');
     } else {
       throw err;
     }
@@ -65,7 +68,7 @@ async function main(): Promise<void> {
       await runStatement(conn, CREATE_AI_ANALYSIS, 'ai_analysis');
       await runStatement(conn, CREATE_USER_PROFILE, 'user_profile');
       await conn.commit();
-      console.log('[init-db] Schema initialization complete.');
+      logger.info('init-db: schema initialization complete');
     } finally {
       await conn.close();
     }
@@ -81,10 +84,9 @@ async function main(): Promise<void> {
       msg.includes('credentials') ||
       e.code === 'ERR_ORACLEDB_NO_CREDENTIALS';
     if (isConnErr) {
-      console.warn('[init-db] WARNING: Could not connect to Oracle DB — wallet may be empty or credentials missing.');
-      console.warn('[init-db] Set DB_USER, DB_PASSWORD, DB_CONNECTION_STRING, TNS_ADMIN in .env to enable.');
+      logger.warn('init-db: cannot connect to Oracle DB — wallet may be missing or credentials unset. Set DB_USER, DB_PASSWORD, DB_CONNECTION_STRING, TNS_ADMIN in .env');
     } else {
-      console.error('[init-db] Unexpected error:', msg);
+      logger.error({ err }, 'init-db: unexpected error');
       process.exit(1);
     }
   } finally {

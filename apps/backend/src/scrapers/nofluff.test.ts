@@ -66,11 +66,11 @@ describe('fetchNoFluff()', () => {
     );
 
     const jobs = await fetchNoFluff();
-    expect(jobs[0].id).toBe('nf-nf-001');
-    expect(jobs[0].salary_b2b_min).toBe(14000);
-    expect(jobs[0].salary_b2b_max).toBe(20000);
-    expect(jobs[0].salary_uop_min).toBeNull();
-    expect(jobs[0].source).toBe('nofluff');
+    expect(jobs[0]!.id).toBe('nf-nf-001');
+    expect(jobs[0]!.salary_b2b_min).toBe(14000);
+    expect(jobs[0]!.salary_b2b_max).toBe(20000);
+    expect(jobs[0]!.salary_uop_min).toBeNull();
+    expect(jobs[0]!.source).toBe('nofluff');
   });
 
   it('maps uop (permanent) salary correctly', async () => {
@@ -81,9 +81,9 @@ describe('fetchNoFluff()', () => {
     );
 
     const jobs = await fetchNoFluff();
-    expect(jobs[0].salary_uop_min).toBe(11000);
-    expect(jobs[0].salary_uop_max).toBe(15000);
-    expect(jobs[0].salary_b2b_min).toBeNull();
+    expect(jobs[0]!.salary_uop_min).toBe(11000);
+    expect(jobs[0]!.salary_uop_max).toBe(15000);
+    expect(jobs[0]!.salary_b2b_min).toBeNull();
   });
 
   it('skips malformed records missing company name', async () => {

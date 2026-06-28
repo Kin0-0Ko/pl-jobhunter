@@ -1,0 +1,6 @@
+wallet/
+.env
+.env.*
+!.env.example
+dist/
+*.tsbuildinfo

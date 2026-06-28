@@ -15,10 +15,12 @@ export function useJobs(): UseJobsResult {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     getJobs()
-      .then(setJobs)
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((data) => { if (!cancelled) setJobs(data); })
+      .catch((err: Error) => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const updateStatus = useCallback(async (id: string, status: JobStatus) => {

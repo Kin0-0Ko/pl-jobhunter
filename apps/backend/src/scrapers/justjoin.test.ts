@@ -49,7 +49,7 @@ describe('fetchJustJoin()', () => {
 
     expect(jobs).toHaveLength(2);
 
-    const first = jobs[0];
+    const first = jobs[0]!;
     expect(first.id).toBe('jj-abc-123');
     expect(first.source).toBe('justjoin');
     expect(first.salary_b2b_min).toBe(15000);
@@ -69,9 +69,9 @@ describe('fetchJustJoin()', () => {
 
     const jobs = await fetchJustJoin();
     expect(jobs).toHaveLength(1);
-    expect(jobs[0].salary_uop_min).toBeNull();
-    expect(jobs[0].salary_uop_max).toBeNull();
-    expect(jobs[0].salary_b2b_min).toBe(10000);
+    expect(jobs[0]!.salary_uop_min).toBeNull();
+    expect(jobs[0]!.salary_uop_max).toBeNull();
+    expect(jobs[0]!.salary_b2b_min).toBe(10000);
   });
 
   it('skips malformed records missing title', async () => {

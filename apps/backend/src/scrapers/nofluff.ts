@@ -1,4 +1,7 @@
 import type { Job, JobStatus } from '@pl-jobhunter/shared';
+import pino from 'pino';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 interface NFSalary {
   type: 'b2b' | 'permanent' | string;
@@ -42,7 +45,7 @@ export async function fetchNoFluff(): Promise<Job[]> {
     for (const posting of data.postings ?? []) {
       try {
         if (!posting.id || !posting.title || !posting.name) {
-          console.warn('NoFluff: skipping malformed record', posting);
+          logger.warn({ posting }, 'nofluff: skipping malformed record');
           continue;
         }
 
@@ -65,7 +68,7 @@ export async function fetchNoFluff(): Promise<Job[]> {
           created_at: new Date().toISOString(),
         });
       } catch (err) {
-        console.warn('NoFluff: skipping record due to error', err);
+        logger.warn({ err }, 'nofluff: skipping record due to error');
       }
     }
 

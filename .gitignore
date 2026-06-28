@@ -10,9 +10,17 @@ pnpm-debug.log*
 # ==========================================
 dist/
 build/
+coverage/
 .vite/
 .turbo/
 *.tsbuildinfo
+
+# ==========================================
+#  Logs & Crash Dumps
+# ==========================================
+*.log
+*.stackdump
+bash.exe.stackdump
 
 # ==========================================
 #  Security & Private Credentials (CRITICAL)
@@ -21,11 +29,14 @@ build/
 .env.*
 !.env.example
 *.local
-# Игнорируем файлы кошелька Oracle DB, чтобы не слить доступы к облаку
+wallet/
 **/wallet/
 **/wallet/*
 *.zip
 *.pem
+*.key
+*.p12
+*.sso
 
 # ==========================================
 # ️ Operating System Garbage
