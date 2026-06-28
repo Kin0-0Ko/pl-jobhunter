@@ -50,7 +50,14 @@ export async function jobsRoutes(fastify: FastifyInstance): Promise<void> {
            LEFT JOIN ai_analysis a ON j.id = a.job_id
            ORDER BY a.match_score DESC NULLS LAST`,
           [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: {
+              SUMMARY: { type: oracledb.STRING },
+              TECH_STACK: { type: oracledb.STRING },
+              WHY_GOOD: { type: oracledb.STRING },
+            },
+          },
         );
 
         const rows = (result.rows ?? []).map((row) => ({
