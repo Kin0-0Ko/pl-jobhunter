@@ -1,8 +1,6 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: apps/backend/Dockerfile
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-placeholder}/pl-jobhunter/backend:latest
     env_file: ./apps/backend/.env
     volumes:
       - ./apps/backend/wallet:/app/apps/backend/wallet:ro

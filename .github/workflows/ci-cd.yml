@@ -1,10 +1,14 @@
-name: CI
+name: CI/CD
 
 on:
   push:
     branches: [dev, main]
   pull_request:
     branches: [dev, main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/backend
 
 jobs:
   ci:
@@ -33,22 +37,38 @@ jobs:
       - name: Type check backend
         run: pnpm --filter @pl-jobhunter/backend exec tsc --noEmit
 
+      - name: Type check frontend
+        run: pnpm --filter @pl-jobhunter/frontend exec tsc --noEmit
+
       - name: Run tests
         run: pnpm --filter @pl-jobhunter/backend run test
 
-  deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  build-and-push:
     needs: ci
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
 
       - name: Build and push backend image
         uses: docker/build-push-action@v5
@@ -56,8 +76,17 @@ jobs:
           context: .
           file: apps/backend/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=inline
 
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
       - name: Deploy to Oracle VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -66,5 +95,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/pl-jobhunter
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker compose pull backend
             docker compose up -d backend
+            docker image prune -f
