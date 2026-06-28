@@ -1,5 +1,8 @@
 import { Telegraf } from 'telegraf';
 import type { Job } from '@pl-jobhunter/shared';
+import pino from 'pino';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 let bot: Telegraf | null = null;
 
@@ -15,7 +18,7 @@ function getBot(): Telegraf {
 export async function sendJobAlert(job: Job, score: number): Promise<void> {
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
   if (!chatId) {
-    console.warn('[Telegram] TELEGRAM_ADMIN_CHAT_ID not set — skipping alert');
+    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping alert');
     return;
   }
 
@@ -24,14 +27,14 @@ export async function sendJobAlert(job: Job, score: number): Promise<void> {
   try {
     await getBot().telegram.sendMessage(chatId, msg);
   } catch (err) {
-    console.error('[Telegram] Failed to send alert:', err);
+    logger.error({ err }, 'telegram: failed to send job alert');
   }
 }
 
 export async function sendCriticalAlert(source: string, err: Error): Promise<void> {
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
   if (!chatId) {
-    console.warn('[Telegram] TELEGRAM_ADMIN_CHAT_ID not set — skipping critical alert');
+    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping critical alert');
     return;
   }
 
@@ -40,14 +43,14 @@ export async function sendCriticalAlert(source: string, err: Error): Promise<voi
   try {
     await getBot().telegram.sendMessage(chatId, msg);
   } catch (dispatchErr) {
-    console.error('[Telegram] Failed to send critical alert:', dispatchErr);
+    logger.error({ err: dispatchErr }, 'telegram: failed to send critical alert');
   }
 }
 
 export async function sendOllamaWarning(jobId: string, err: Error): Promise<void> {
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
   if (!chatId) {
-    console.warn('[Telegram] TELEGRAM_ADMIN_CHAT_ID not set — skipping Ollama warning');
+    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping Ollama warning');
     return;
   }
 
@@ -56,6 +59,6 @@ export async function sendOllamaWarning(jobId: string, err: Error): Promise<void
   try {
     await getBot().telegram.sendMessage(chatId, msg);
   } catch (dispatchErr) {
-    console.error('[Telegram] Failed to send Ollama warning:', dispatchErr);
+    logger.error({ err: dispatchErr }, 'telegram: failed to send Ollama warning');
   }
 }

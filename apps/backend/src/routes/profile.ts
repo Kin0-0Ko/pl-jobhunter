@@ -119,7 +119,8 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
           [],
           { outFormat: oracledb.OUT_FORMAT_OBJECT },
         );
-        const row = result.rows![0];
+        const row = result.rows?.[0];
+        if (!row) return reply.code(500).send({ error: 'profile write succeeded but row not found' });
 
         return reply.send({
           skills: JSON.parse(row['SKILLS'] as string) as string[],

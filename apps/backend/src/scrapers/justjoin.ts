@@ -1,4 +1,7 @@
 import type { Job, JobStatus } from '@pl-jobhunter/shared';
+import pino from 'pino';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 interface JJEmploymentType {
   type: string;
@@ -25,7 +28,7 @@ export async function fetchJustJoin(): Promise<Job[]> {
   for (const offer of raw as JJOffer[]) {
     try {
       if (!offer.id || !offer.title || !offer.company_name) {
-        console.warn('JustJoin: skipping malformed record', offer);
+        logger.warn({ offer }, 'justjoin: skipping malformed record');
         continue;
       }
 
@@ -48,7 +51,7 @@ export async function fetchJustJoin(): Promise<Job[]> {
         created_at: new Date().toISOString(),
       });
     } catch (err) {
-      console.warn('JustJoin: skipping record due to error', err);
+      logger.warn({ err }, 'justjoin: skipping record due to error');
     }
   }
 

@@ -1,6 +1,9 @@
 import type { Job } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
+import pino from 'pino';
 import { getPool } from '../config/database.js';
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 export interface OllamaScoreResult {
   match_score: number;
@@ -85,10 +88,10 @@ export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
   let userProfile: string;
 
   if (dbProfile) {
-    console.log('[Ollama] Using profile from DB');
+    logger.debug('ollama profile source: db');
     userProfile = dbProfile;
   } else {
-    console.log('[Ollama] Using fallback env profile');
+    logger.debug('ollama profile source: env fallback');
     userProfile =
       process.env.OLLAMA_USER_PROFILE ??
       'Senior TypeScript developer interested in remote roles';
@@ -99,11 +102,11 @@ export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
   try {
     return await callOllama(prompt);
   } catch (err) {
-    console.warn('Ollama first attempt failed, retrying once:', err);
+    logger.warn({ err }, 'ollama first attempt failed, retrying');
     try {
       return await callOllama(prompt);
     } catch (retryErr) {
-      console.error('Ollama retry failed:', retryErr);
+      logger.error({ err: retryErr }, 'ollama retry failed');
       return null;
     }
   }
