@@ -3,7 +3,7 @@ import type { JobStatus } from '@pl-jobhunter/shared';
 import type { UseJobsResult } from '../hooks/useJobs.js';
 import { KanbanColumn } from './KanbanColumn.js';
 
-const STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'ARCHIVED'];
+const STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ARCHIVED'];
 
 interface Props {
   jobs: UseJobsResult['jobs'];

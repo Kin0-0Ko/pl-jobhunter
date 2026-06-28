@@ -1,6 +1,6 @@
 services:
   backend:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-placeholder}/pl-jobhunter/backend:latest
+    image: ghcr.io/kin0-0ko/pl-jobhunter/backend:latest
     env_file: ./apps/backend/.env
     volumes:
       - ./apps/backend/wallet:/app/apps/backend/wallet:ro
@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:0.6.10
+    image: ollama/ollama:latest
     volumes:
       - ollama_models:/root/.ollama
     ports:

@@ -8,7 +8,9 @@ import { authHook } from './middleware/auth.js';
 import { closePool } from './config/database.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { profileRoutes } from './routes/profile.js';
+import { etlRoutes } from './routes/etl.js';
 import { runEtl } from './scheduler/etl.js';
+import { startBot } from './bot/telegram.js';
 
 const server = Fastify({
   logger: {
@@ -46,6 +48,7 @@ server.get('/health', {
 
 await server.register(jobsRoutes);
 await server.register(profileRoutes);
+await server.register(etlRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
@@ -58,6 +61,7 @@ if (process.argv.includes('--run-once')) {
 
 try {
   await server.listen({ port, host });
+  startBot().catch((err) => server.log.error({ err }, 'telegram bot failed to start'));
   cron.schedule('0 */6 * * *', () => {
     runEtl().catch((err) => server.log.error('[ETL] cron error:', err));
   });

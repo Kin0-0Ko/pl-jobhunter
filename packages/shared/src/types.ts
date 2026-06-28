@@ -1,4 +1,4 @@
-export type JobStatus = 'NEW' | 'FAVORITE' | 'APPLIED' | 'ARCHIVED';
+export type JobStatus = 'NEW' | 'FAVORITE' | 'APPLIED' | 'INTERVIEWING' | 'OFFER' | 'REJECTED' | 'ARCHIVED';
 
 export interface UserProfile {
   skills: string[];
@@ -13,7 +13,7 @@ export interface Job {
   title: string;
   company: string;
   url: string;
-  source: 'justjoin' | 'nofluff';
+  source: 'justjoin' | 'nofluff' | 'theprotocol';
   salary_b2b_min: number | null;
   salary_b2b_max: number | null;
   salary_uop_min: number | null;

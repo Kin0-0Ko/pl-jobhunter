@@ -39,7 +39,7 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
         if (!row) return reply.send(null);
 
         return reply.send({
-          skills: JSON.parse(row['SKILLS'] as string) as string[],
+          skills: (typeof row['SKILLS'] === 'string' ? JSON.parse(row['SKILLS']) : row['SKILLS']) as string[],
           resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
           search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,
@@ -123,7 +123,7 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
         if (!row) return reply.code(500).send({ error: 'profile write succeeded but row not found' });
 
         return reply.send({
-          skills: JSON.parse(row['SKILLS'] as string) as string[],
+          skills: (typeof row['SKILLS'] === 'string' ? JSON.parse(row['SKILLS']) : row['SKILLS']) as string[],
           resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
           search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,
