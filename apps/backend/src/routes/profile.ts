@@ -38,8 +38,14 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
         const row = result.rows?.[0];
         if (!row) return reply.send(null);
 
+        const rawSkills = row['SKILLS'];
+        const skills: string[] = Array.isArray(rawSkills)
+          ? (rawSkills as string[])
+          : typeof rawSkills === 'string'
+            ? (JSON.parse(rawSkills) as string[])
+            : [];
         return reply.send({
-          skills: (typeof row['SKILLS'] === 'string' ? JSON.parse(row['SKILLS']) : row['SKILLS']) as string[],
+          skills,
           resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
           search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,
@@ -122,8 +128,14 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
         const row = result.rows?.[0];
         if (!row) return reply.code(500).send({ error: 'profile write succeeded but row not found' });
 
+        const rawSkills2 = row['SKILLS'];
+        const skills2: string[] = Array.isArray(rawSkills2)
+          ? (rawSkills2 as string[])
+          : typeof rawSkills2 === 'string'
+            ? (JSON.parse(rawSkills2) as string[])
+            : [];
         return reply.send({
-          skills: (typeof row['SKILLS'] === 'string' ? JSON.parse(row['SKILLS']) : row['SKILLS']) as string[],
+          skills: skills2,
           resume_text: (row['RESUME_TEXT'] as string | null) ?? null,
           preferred_contract: row['PREFERRED_CONTRACT'] as UserProfile['preferred_contract'],
           search_preferences: (row['SEARCH_PREFERENCES'] as string | null) ?? null,

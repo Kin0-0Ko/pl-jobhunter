@@ -44,7 +44,7 @@ export async function putProfile(data: Omit<UserProfile, 'updated_at'>): Promise
 export async function triggerEtl(): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/etl/trigger`, {
     method: 'POST',
-    headers: headers(),
+    headers: { 'X-API-TOKEN': API_TOKEN },
   });
   if (!res.ok) throw new Error(`${res.status}`);
 }
