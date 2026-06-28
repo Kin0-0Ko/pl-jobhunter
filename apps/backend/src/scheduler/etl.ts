@@ -43,7 +43,7 @@ async function mergeJob(job: Job): Promise<boolean> {
         salary_uop_max: job.salary_uop_max,
         currency: job.currency,
         status: job.status,
-        created_at: job.created_at,
+        created_at: new Date(job.created_at),
       },
       { autoCommit: true },
     );

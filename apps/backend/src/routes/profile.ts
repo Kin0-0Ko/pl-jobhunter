@@ -33,7 +33,14 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
           `SELECT skills, resume_text, preferred_contract, search_preferences, updated_at
            FROM user_profile WHERE id = 1`,
           [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: {
+              SKILLS: { type: oracledb.STRING },
+              RESUME_TEXT: { type: oracledb.STRING },
+              SEARCH_PREFERENCES: { type: oracledb.STRING },
+            },
+          },
         );
         const row = result.rows?.[0];
         if (!row) return reply.send(null);
@@ -125,7 +132,14 @@ export async function profileRoutes(fastify: FastifyInstance): Promise<void> {
           `SELECT skills, resume_text, preferred_contract, search_preferences, updated_at
            FROM user_profile WHERE id = 1`,
           [],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: {
+              SKILLS: { type: oracledb.STRING },
+              RESUME_TEXT: { type: oracledb.STRING },
+              SEARCH_PREFERENCES: { type: oracledb.STRING },
+            },
+          },
         );
         const row = result.rows?.[0];
         if (!row) return reply.code(500).send({ error: 'profile write succeeded but row not found' });
