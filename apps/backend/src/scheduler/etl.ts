@@ -5,6 +5,7 @@ import { getPool } from '../config/database.js';
 import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
+import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
 import { scoreJob } from '../ai/ollama.js';
 import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
@@ -93,6 +94,7 @@ export async function runEtl(): Promise<void> {
       { name: 'justjoin', fn: fetchJustJoin },
       { name: 'nofluff', fn: fetchNoFluff },
       { name: 'theprotocol', fn: fetchTheProtocol },
+      { name: 'rocketjobs', fn: fetchRocketJobs },
     ];
 
     const counts: Record<string, number> = {};

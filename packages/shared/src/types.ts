@@ -13,7 +13,7 @@ export interface Job {
   title: string;
   company: string;
   url: string;
-  source: 'justjoin' | 'nofluff' | 'theprotocol';
+  source: 'justjoin' | 'nofluff' | 'theprotocol' | 'rocketjobs';
   salary_b2b_min: number | null;
   salary_b2b_max: number | null;
   salary_uop_min: number | null;

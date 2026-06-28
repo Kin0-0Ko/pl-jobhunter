@@ -11,43 +11,49 @@ afterAll(() => server.close());
 
 const mockOffers = [
   {
-    id: 'abc-123',
+    guid: 'abc-123',
     title: 'Senior TypeScript Developer',
     companyName: 'Acme Corp',
-    offerUrl: 'https://justjoin.it/offers/abc-123',
+    slug: 'senior-typescript-developer-acme',
     employmentTypes: [
-      { type: 'b2b', salary: { from: 15000, to: 22000, currency: 'PLN' } },
-      { type: 'permanent', salary: { from: 12000, to: 18000, currency: 'PLN' } },
+      { type: 'b2b', fromPln: 15000, toPln: 22000 },
+      { type: 'permanent', fromPln: 12000, toPln: 18000 },
     ],
   },
   {
-    id: 'def-456',
+    guid: 'def-456',
     title: 'Node.js Engineer',
     companyName: 'Beta Ltd',
-    offerUrl: 'https://justjoin.it/offers/def-456',
+    slug: 'nodejs-engineer-beta',
     employmentTypes: [
-      { type: 'b2b', salary: { from: 10000, to: 16000, currency: 'PLN' } },
+      { type: 'b2b', fromPln: 10000, toPln: 16000 },
     ],
   },
   {
     // malformed — no title
-    id: 'bad-789',
+    guid: 'bad-789',
     companyName: 'Bad Corp',
+    slug: 'bad',
     employmentTypes: [],
   },
 ];
 
+const mockResponse = {
+  data: mockOffers,
+  meta: { totalPages: 1, nextPage: null },
+};
+
 describe('fetchJustJoin()', () => {
   it('normalizes b2b + uop salary fields correctly', async () => {
     server.use(
-      http.post('https://justjoin.it/api/offers-with-filters', () =>
-        HttpResponse.json({ data: mockOffers })
+      http.get('https://api.justjoin.it/v2/user-panel/offers', () =>
+        HttpResponse.json({ data: [mockOffers[0]], meta: { totalPages: 1, nextPage: null } })
       )
     );
 
     const jobs = await fetchJustJoin();
 
-    expect(jobs).toHaveLength(2);
+    expect(jobs).toHaveLength(1);
 
     const first = jobs[0]!;
     expect(first.id).toBe('jj-abc-123');
@@ -62,8 +68,8 @@ describe('fetchJustJoin()', () => {
 
   it('handles b2b-only offer (uop salary null)', async () => {
     server.use(
-      http.post('https://justjoin.it/api/offers-with-filters', () =>
-        HttpResponse.json({ data: [mockOffers[1]] })
+      http.get('https://api.justjoin.it/v2/user-panel/offers', () =>
+        HttpResponse.json({ data: [mockOffers[1]], meta: { totalPages: 1, nextPage: null } })
       )
     );
 
@@ -76,8 +82,8 @@ describe('fetchJustJoin()', () => {
 
   it('skips malformed records missing title', async () => {
     server.use(
-      http.post('https://justjoin.it/api/offers-with-filters', () =>
-        HttpResponse.json({ data: mockOffers })
+      http.get('https://api.justjoin.it/v2/user-panel/offers', () =>
+        HttpResponse.json(mockResponse)
       )
     );
 
@@ -88,7 +94,7 @@ describe('fetchJustJoin()', () => {
 
   it('returns empty array on non-200 response (non-fatal)', async () => {
     server.use(
-      http.post('https://justjoin.it/api/offers-with-filters', () =>
+      http.get('https://api.justjoin.it/v2/user-panel/offers', () =>
         HttpResponse.json({ error: 'server error' }, { status: 500 })
       )
     );

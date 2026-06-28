@@ -3,35 +3,34 @@ import pino from 'pino';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
-interface JJEmploymentType {
+interface RJEmploymentType {
   type: string;
   fromPln: number | null;
   toPln: number | null;
-  currency: string;
 }
 
-interface JJOffer {
+interface RJOffer {
   guid: string;
   title: string;
   companyName: string;
   slug: string;
-  employmentTypes: JJEmploymentType[];
+  employmentTypes: RJEmploymentType[];
 }
 
-interface JJResponse {
-  data: JJOffer[];
+interface RJResponse {
+  data: RJOffer[];
   meta: { totalPages: number; nextPage: number | null };
 }
 
 const MAX_PAGES = 5;
 
-export async function fetchJustJoin(): Promise<Job[]> {
+export async function fetchRocketJobs(): Promise<Job[]> {
   try {
     const jobs: Job[] = [];
 
     for (let page = 1; page <= MAX_PAGES; page++) {
       const res = await fetch(
-        `https://api.justjoin.it/v2/user-panel/offers?page=${page}&sortBy=published&orderBy=DESC&perPage=100`,
+        `https://api.rocketjobs.pl/v2/user-panel/offers?page=${page}&perPage=100`,
         {
           headers: {
             version: '2',
@@ -40,9 +39,9 @@ export async function fetchJustJoin(): Promise<Job[]> {
         },
       );
 
-      if (!res.ok) throw new Error(`JustJoin API error: ${res.status}`);
+      if (!res.ok) throw new Error(`RocketJobs API error: ${res.status}`);
 
-      const raw = (await res.json()) as JJResponse;
+      const raw = (await res.json()) as RJResponse;
       const offers = raw.data ?? [];
 
       for (const offer of offers) {
@@ -53,10 +52,10 @@ export async function fetchJustJoin(): Promise<Job[]> {
           const uop = offer.employmentTypes?.find((e) => e.type === 'permanent');
 
           jobs.push({
-            id: `jj-${offer.guid}`,
+            id: `rj-${offer.guid}`,
             title: offer.title,
             company: offer.companyName,
-            url: `https://justjoin.it/offers/${offer.slug}`,
+            url: `https://rocketjobs.pl/offer/${offer.slug}`,
             source: 'justjoin',
             salary_b2b_min: b2b?.fromPln ?? null,
             salary_b2b_max: b2b?.toPln ?? null,
@@ -67,18 +66,18 @@ export async function fetchJustJoin(): Promise<Job[]> {
             created_at: new Date().toISOString(),
           });
         } catch (err) {
-          logger.warn({ err }, 'justjoin: skipping record due to error');
+          logger.warn({ err }, 'rocketjobs: skipping record due to error');
         }
       }
 
       if (!raw.meta?.nextPage) break;
     }
 
-    logger.info({ count: jobs.length }, 'justjoin: fetched jobs');
+    logger.info({ count: jobs.length }, 'rocketjobs: fetched jobs');
     return jobs;
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
-    logger.warn({ err: error.message }, 'justjoin: scraper failed — returning empty array');
+    logger.warn({ err: error.message }, 'rocketjobs: scraper failed — returning empty array');
     return [];
   }
 }
