@@ -1,7 +1,11 @@
 import type { Job } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import pino from 'pino';
+import pLimit from 'p-limit';
 import { getPool } from '../config/database.js';
+
+// Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
+const ollamaLimit = pLimit(1);
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -63,7 +67,7 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
   const res = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, format: 'json', stream: false }),
+    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: 200 } }),
   });
 
   if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
@@ -100,11 +104,11 @@ export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
   const prompt = buildPrompt(job, userProfile);
 
   try {
-    return await callOllama(prompt);
+    return await ollamaLimit(() => callOllama(prompt));
   } catch (err) {
     logger.warn({ err }, 'ollama first attempt failed, retrying');
     try {
-      return await callOllama(prompt);
+      return await ollamaLimit(() => callOllama(prompt));
     } catch (retryErr) {
       logger.error({ err: retryErr }, 'ollama retry failed');
       return null;
