@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import type { JobWithAnalysis, JobStatus } from '@pl-jobhunter/shared';
+import type { Job, JobWithAnalysis, JobStatus } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import { getPool } from '../config/database.js';
 
-const JOB_STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'ARCHIVED'];
+const JOB_STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ARCHIVED'];
 
 const jobWithAnalysisSchema = {
   type: 'object',
@@ -58,7 +58,7 @@ export async function jobsRoutes(fastify: FastifyInstance): Promise<void> {
           title: row['TITLE'] as string,
           company: row['COMPANY'] as string,
           url: row['URL'] as string,
-          source: row['SOURCE'] as 'justjoin' | 'nofluff',
+          source: row['SOURCE'] as Job['source'],
           salary_b2b_min: row['SALARY_B2B_MIN'] as number | null,
           salary_b2b_max: row['SALARY_B2B_MAX'] as number | null,
           salary_uop_min: row['SALARY_UOP_MIN'] as number | null,

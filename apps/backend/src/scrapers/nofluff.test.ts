@@ -98,13 +98,14 @@ describe('fetchNoFluff()', () => {
     expect(ids).not.toContain('nf-bad-003');
   });
 
-  it('throws on non-200 response', async () => {
+  it('returns empty array on non-200 response (non-fatal)', async () => {
     server.use(
       http.post('https://nofluffjobs.com/api/search/posting', () =>
         HttpResponse.json({ error: 'rate limited' }, { status: 429 })
       )
     );
 
-    await expect(fetchNoFluff()).rejects.toThrow('NoFluffJobs API error: 429');
+    const jobs = await fetchNoFluff();
+    expect(jobs).toEqual([]);
   });
 });

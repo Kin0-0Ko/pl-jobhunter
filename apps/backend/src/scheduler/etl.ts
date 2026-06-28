@@ -4,6 +4,7 @@ import pino from 'pino';
 import { getPool } from '../config/database.js';
 import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
+import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { scoreJob } from '../ai/ollama.js';
 import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
@@ -86,18 +87,28 @@ export async function runEtl(): Promise<void> {
   logger.info({ etl_run_id }, '[ETL] Starting run');
 
   try {
-    let jobs: Job[];
-    try {
-      const [jjJobs, nfJobs] = await Promise.all([fetchJustJoin(), fetchNoFluff()]);
-      jobs = [...jjJobs, ...nfJobs];
-      logger.info({ etl_run_id, total: jobs.length, justjoin: jjJobs.length, nofluff: nfJobs.length }, '[ETL] Fetched jobs');
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      logger.error({ etl_run_id, err: error.message }, '[ETL] Scraper error — aborting');
-      await sendCriticalAlert('justjoin+nofluff', error);
-      process.exitCode = 1;
-      return;
+    const jobs: Job[] = [];
+
+    const scrapers: Array<{ name: string; fn: () => Promise<Job[]> }> = [
+      { name: 'justjoin', fn: fetchJustJoin },
+      { name: 'nofluff', fn: fetchNoFluff },
+      { name: 'theprotocol', fn: fetchTheProtocol },
+    ];
+
+    const counts: Record<string, number> = {};
+    for (const { name, fn } of scrapers) {
+      try {
+        const results = await fn();
+        counts[name] = results.length;
+        jobs.push(...results);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.warn({ etl_run_id, scraper: name, err: error.message }, '[ETL] Scraper failed — continuing');
+        counts[name] = 0;
+      }
     }
+
+    logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
     let inserted = 0;
     let scored = 0;

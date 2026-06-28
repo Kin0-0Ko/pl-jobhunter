@@ -13,9 +13,9 @@ const mockOffers = [
   {
     id: 'abc-123',
     title: 'Senior TypeScript Developer',
-    company_name: 'Acme Corp',
-    offer_url: 'https://justjoin.it/offers/abc-123',
-    employment_types: [
+    companyName: 'Acme Corp',
+    offerUrl: 'https://justjoin.it/offers/abc-123',
+    employmentTypes: [
       { type: 'b2b', salary: { from: 15000, to: 22000, currency: 'PLN' } },
       { type: 'permanent', salary: { from: 12000, to: 18000, currency: 'PLN' } },
     ],
@@ -23,25 +23,25 @@ const mockOffers = [
   {
     id: 'def-456',
     title: 'Node.js Engineer',
-    company_name: 'Beta Ltd',
-    offer_url: 'https://justjoin.it/offers/def-456',
-    employment_types: [
+    companyName: 'Beta Ltd',
+    offerUrl: 'https://justjoin.it/offers/def-456',
+    employmentTypes: [
       { type: 'b2b', salary: { from: 10000, to: 16000, currency: 'PLN' } },
     ],
   },
   {
     // malformed — no title
     id: 'bad-789',
-    company_name: 'Bad Corp',
-    employment_types: [],
+    companyName: 'Bad Corp',
+    employmentTypes: [],
   },
 ];
 
 describe('fetchJustJoin()', () => {
   it('normalizes b2b + uop salary fields correctly', async () => {
     server.use(
-      http.get('https://justjoin.it/api/offers', () =>
-        HttpResponse.json(mockOffers)
+      http.post('https://justjoin.it/api/offers-with-filters', () =>
+        HttpResponse.json({ data: mockOffers })
       )
     );
 
@@ -62,8 +62,8 @@ describe('fetchJustJoin()', () => {
 
   it('handles b2b-only offer (uop salary null)', async () => {
     server.use(
-      http.get('https://justjoin.it/api/offers', () =>
-        HttpResponse.json([mockOffers[1]])
+      http.post('https://justjoin.it/api/offers-with-filters', () =>
+        HttpResponse.json({ data: [mockOffers[1]] })
       )
     );
 
@@ -76,8 +76,8 @@ describe('fetchJustJoin()', () => {
 
   it('skips malformed records missing title', async () => {
     server.use(
-      http.get('https://justjoin.it/api/offers', () =>
-        HttpResponse.json(mockOffers)
+      http.post('https://justjoin.it/api/offers-with-filters', () =>
+        HttpResponse.json({ data: mockOffers })
       )
     );
 
@@ -86,13 +86,14 @@ describe('fetchJustJoin()', () => {
     expect(ids).not.toContain('jj-bad-789');
   });
 
-  it('throws on non-200 response', async () => {
+  it('returns empty array on non-200 response (non-fatal)', async () => {
     server.use(
-      http.get('https://justjoin.it/api/offers', () =>
+      http.post('https://justjoin.it/api/offers-with-filters', () =>
         HttpResponse.json({ error: 'server error' }, { status: 500 })
       )
     );
 
-    await expect(fetchJustJoin()).rejects.toThrow('JustJoin API error: 500');
+    const jobs = await fetchJustJoin();
+    expect(jobs).toEqual([]);
   });
 });
