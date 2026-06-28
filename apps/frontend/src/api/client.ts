@@ -40,3 +40,11 @@ export async function putProfile(data: Omit<UserProfile, 'updated_at'>): Promise
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json() as Promise<UserProfile>;
 }
+
+export async function triggerEtl(): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/etl/trigger`, {
+    method: 'POST',
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+}

@@ -3,10 +3,13 @@ import type { JobWithAnalysis, JobStatus } from '@pl-jobhunter/shared';
 import { JobCard } from './JobCard.js';
 
 const COLUMN_LABELS: Record<JobStatus, string> = {
-  NEW: 'New',
-  FAVORITE: 'Favorite',
-  APPLIED: 'Applied',
-  ARCHIVED: 'Archived',
+  NEW: '🆕 New',
+  FAVORITE: '❤️ Liked',
+  APPLIED: '📨 Applied',
+  INTERVIEWING: '🗣️ Interviewing',
+  OFFER: '🎉 Offer',
+  REJECTED: '❌ Rejected',
+  ARCHIVED: '📦 Archived',
 };
 
 interface Props {
