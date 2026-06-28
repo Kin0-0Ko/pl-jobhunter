@@ -1,0 +1,9 @@
+{
+  "specVersion": "2.0.0",
+  "project": "PL-AI-JobHunter",
+  "compiler": "typescript",
+  "validation": {
+    "strictTypes": true,
+    "requireAcceptanceCriteria": true
+  }
+}

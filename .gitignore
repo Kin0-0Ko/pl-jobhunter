@@ -10,21 +10,33 @@ pnpm-debug.log*
 # ==========================================
 dist/
 build/
+coverage/
 .vite/
 .turbo/
 *.tsbuildinfo
+
+# ==========================================
+#  Logs & Crash Dumps
+# ==========================================
+*.log
+*.stackdump
+bash.exe.stackdump
 
 # ==========================================
 #  Security & Private Credentials (CRITICAL)
 # ==========================================
 .env
 .env.*
+!.env.example
 *.local
-# Игнорируем файлы кошелька Oracle DB, чтобы не слить доступы к облаку
+wallet/
 **/wallet/
 **/wallet/*
 *.zip
 *.pem
+*.key
+*.p12
+*.sso
 
 # ==========================================
 # ️ Operating System Garbage
@@ -48,8 +60,6 @@ desktop.ini
 # ==========================================
 #  Spec-Kit & Claude Code
 # ==========================================
-!.spec-kit/
-!.spec-kit/**
-!.claude/
-!.claude/**
-!scripts/spec-check.js
+.specify/
+.claude/
+.claude/**

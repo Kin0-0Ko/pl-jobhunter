@@ -1,0 +1,14 @@
+{
+  "name": "pl-jobhunter-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "specify-cli": "^0.1.0"
+  }
+}
