@@ -150,3 +150,65 @@ Backend is ESM Node process; frontend is Vite SPA deployed separately to Vercel.
 | 5 — AI + Bot + Scheduler | T015–T018 | Ollama scorer (mocked tests) + Telegram + cron | T013–T014 |
 | 6 — Frontend | T019–T027 | React Kanban + drag-drop + tax calc | T011 |
 | 7 — Polish | T028–T032 | Docker compose, full build, e2e validation | All |
+
+---
+
+## Production Deployment Architecture (GHCR + Pull)
+
+**Decision**: Oracle Always Free Tier VPS (1 OCPU / 1 GB RAM) cannot afford local Docker builds. All image building happens in GitHub Actions CI; the VPS only pulls prebuilt images from GitHub Container Registry (GHCR).
+
+### CI/CD Pipeline (`feat/infrastructure-setup` → `main`)
+
+```
+Push to main
+  → GitHub Actions ci-cd.yml
+      1. pnpm audit --audit-level=high         # security gate
+      2. tsc --noEmit (backend + frontend)     # type gate
+      3. pnpm test                             # 32 tests
+      4. docker buildx build                  # multi-stage, push to ghcr.io
+         → ghcr.io/<org>/pl-jobhunter/backend:<sha>
+         → ghcr.io/<org>/pl-jobhunter/backend:latest
+      5. SSH → VPS
+         → docker compose pull backend
+         → docker compose up -d backend
+```
+
+### VPS `docker-compose.yml` (production)
+
+```yaml
+services:
+  backend:
+    image: ghcr.io/<org>/pl-jobhunter/backend:latest   # pull from GHCR — NO local build
+    env_file: ./apps/backend/.env
+    volumes:
+      - ./apps/backend/wallet:/app/apps/backend/wallet:ro
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.6.10
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+```
+
+### Frontend Environment Variables (Vercel)
+
+| Variable | Value |
+|----------|-------|
+| `VITE_API_BASE_URL` | `https://<vps-domain>` |
+| `VITE_API_TOKEN` | Same token as `API_TOKEN` in backend `.env` |
+
+**Standard**: `VITE_API_BASE_URL` is the canonical env var name. `apps/frontend/src/api/client.ts` reads `import.meta.env['VITE_API_BASE_URL']`. No other naming variant is accepted.
+
+### Rationale
+
+- **GHCR + Pull**: Zero build memory on VPS. Free tier has 1 GB RAM — `tsc` + `pnpm install` alone would OOM the machine.
+- **`latest` tag on VPS**: VPS always pulls the last CI-built image. SHA tags exist in GHCR for rollback.
+- **Ollama stays on VPS**: Inference must run locally; it is not containerized via GHCR.
