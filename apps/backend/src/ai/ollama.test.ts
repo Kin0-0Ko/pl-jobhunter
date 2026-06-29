@@ -167,6 +167,12 @@ describe('isFirstPersonInverted() (T018)', () => {
   it('does not flag "I/O" false positive', () => expect(isFirstPersonInverted('The role involves I/O bound tasks')).toBe(false));
   it('does not flag "I18n" false positive', () => expect(isFirstPersonInverted('Experience with I18n required')).toBe(false));
   it('does not flag empty string', () => expect(isFirstPersonInverted('')).toBe(false));
+  it('detects "User seeks"', () => expect(isFirstPersonInverted('User seeks a full-stack developer')).toBe(true));
+  it('detects "User is"', () => expect(isFirstPersonInverted('User is a TypeScript developer')).toBe(true));
+  it('detects "Candidate is"', () => expect(isFirstPersonInverted('Candidate is a full stack developer with expertise')).toBe(true));
+  it('detects "Candidate has"', () => expect(isFirstPersonInverted('Candidate has 5 years of experience')).toBe(true));
+  it('does not flag "The company seeks"', () => expect(isFirstPersonInverted('The company seeks a developer')).toBe(false));
+  it('does not flag "The role requires"', () => expect(isFirstPersonInverted('The role requires TypeScript experience')).toBe(false));
 });
 
 // T021: isRelevantJob wildcard ordering (US5)

@@ -18,7 +18,7 @@ export interface OllamaScoreResult {
 }
 
 const FIRST_PERSON_RE =
-  /\b(I am|I'm|I have|I've|I can|I will|I would|my (?:background|experience|skills))\b/i;
+  /\b(I am|I'm|I have|I've|I can|I will|I would|my (?:background|experience|skills)|User (?:is|seeks|requires|wants)|Candidate (?:is|has|seeks))\b/i;
 
 export function isFirstPersonInverted(summary: string): boolean {
   return FIRST_PERSON_RE.test(summary);
@@ -226,21 +226,19 @@ async function getProfileFromDb(): Promise<string | null> {
 }
 
 function buildPrompt(job: Job, userProfile: string): string {
-  const descSection = job.description
-    ? `\n\nJob posting:\n${job.description.slice(0, 1500)}`
-    : '';
+  const desc = job.description ? job.description.slice(0, 1200) : '';
+  const descSection = desc ? `\n\nPosting text:\n${desc}` : '';
 
-  return `You are a metadata extraction tool. Extract facts about what the company requires.
-Do NOT write in first person. Never say "I am", "I have", or "I can".
-Output ONLY valid JSON. No markdown, no <think> tags, no explanation text.
+  return `Extract metadata from this job posting. Output ONLY valid JSON, no markdown, no explanation.
 
-User skills: ${userProfile}
 Job: ${job.title} at ${job.company}${descSection}
 
-Extract these fields about the COMPANY's requirements:
-- match_score: integer 0-100 (how well user skills match this posting)
-- summary: one sentence describing what the company seeks, written in third person
-- tech_stack: array of technology strings explicitly named in the posting (empty array if none)
+Candidate skills (for scoring only): ${userProfile}
+
+Rules:
+- summary: ONE sentence about what THE COMPANY requires (not the candidate). Start with "The company" or "The role". Never use "I", "my", "user", "candidate".
+- match_score: 0-100 integer. How well candidate skills match company requirements.
+- tech_stack: only technologies explicitly named in the posting text. Empty array if none listed.
 
 Return exactly: {"match_score":<int>,"summary":"<string>","tech_stack":[<strings>]}`;
 }
