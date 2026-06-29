@@ -6,6 +6,8 @@ export interface UserProfile {
   preferred_contract: 'b2b' | 'uop' | 'both';
   search_preferences: string | null;
   updated_at: string;
+  target_seniority?: string[];
+  max_experience_years?: number;
 }
 
 export interface Job {

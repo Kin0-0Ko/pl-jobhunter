@@ -2,12 +2,30 @@ import { useState, useEffect } from 'react';
 import type { UserProfile } from '@pl-jobhunter/shared';
 import { useProfile } from '../hooks/useProfile.js';
 
+const SENIORITY_OPTIONS = ['junior', 'mid', 'senior', 'lead'] as const;
+type SeniorityLevel = typeof SENIORITY_OPTIONS[number];
+
+interface SearchPrefsJson {
+  target_seniority?: string[];
+  max_experience_years?: number;
+}
+
+function parseSearchPrefs(raw: string | null): SearchPrefsJson {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as SearchPrefsJson;
+  } catch {
+    return {};
+  }
+}
+
 export function ProfileForm() {
   const { profile, loading, error, updateProfile } = useProfile();
   const [skills, setSkills] = useState('');
   const [resumeText, setResumeText] = useState('');
   const [preferredContract, setPreferredContract] = useState<UserProfile['preferred_contract']>('both');
-  const [searchPreferences, setSearchPreferences] = useState('');
+  const [targetSeniority, setTargetSeniority] = useState<SeniorityLevel[]>([]);
+  const [maxExperienceYears, setMaxExperienceYears] = useState<string>('');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -16,9 +34,23 @@ export function ProfileForm() {
       setSkills(profile.skills.join(', '));
       setResumeText(profile.resume_text ?? '');
       setPreferredContract(profile.preferred_contract);
-      setSearchPreferences(profile.search_preferences ?? '');
+      const prefs = parseSearchPrefs(profile.search_preferences);
+      setTargetSeniority(
+        (prefs.target_seniority ?? []).filter((s): s is SeniorityLevel =>
+          SENIORITY_OPTIONS.includes(s as SeniorityLevel)
+        )
+      );
+      setMaxExperienceYears(
+        prefs.max_experience_years != null ? String(prefs.max_experience_years) : ''
+      );
     }
   }, [profile]);
+
+  const toggleSeniority = (level: SeniorityLevel) => {
+    setTargetSeniority(prev =>
+      prev.includes(level) ? prev.filter(s => s !== level) : [...prev, level]
+    );
+  };
 
   const handleSave = async () => {
     const parsedSkills = skills.split(',').map((s) => s.trim()).filter(Boolean);
@@ -28,12 +60,18 @@ export function ProfileForm() {
     }
     setValidationError(null);
     setSaveState('saving');
+
+    const prefs: SearchPrefsJson = {};
+    if (targetSeniority.length > 0) prefs.target_seniority = targetSeniority;
+    const maxExp = maxExperienceYears !== '' ? Number(maxExperienceYears) : undefined;
+    if (maxExp != null && !isNaN(maxExp) && maxExp >= 0) prefs.max_experience_years = maxExp;
+
     try {
       await updateProfile({
         skills: parsedSkills,
         resume_text: resumeText || null,
         preferred_contract: preferredContract,
-        search_preferences: searchPreferences || null,
+        search_preferences: Object.keys(prefs).length > 0 ? JSON.stringify(prefs) : null,
       });
       setSaveState('saved');
       setTimeout(() => setSaveState('idle'), 2000);
@@ -105,16 +143,43 @@ export function ProfileForm() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Search preferences
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Target seniority <span className="text-gray-400 font-normal">(ETL pre-filter)</span>
           </label>
-          <textarea
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            rows={2}
-            value={searchPreferences}
-            onChange={(e) => setSearchPreferences(e.target.value)}
-            placeholder="Remote only, Poland-based, 15k–22k PLN B2B"
+          <div className="flex gap-3 flex-wrap">
+            {SENIORITY_OPTIONS.map((level) => (
+              <label key={level} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={targetSeniority.includes(level)}
+                  onChange={() => toggleSeniority(level)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="capitalize">{level}</span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">
+            Jobs with Senior/Lead/Principal/Staff/Architect titles are blocked when only junior/mid selected.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Max experience required <span className="text-gray-400 font-normal">(years, ETL pre-filter)</span>
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={20}
+            className="w-32 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={maxExperienceYears}
+            onChange={(e) => setMaxExperienceYears(e.target.value)}
+            placeholder="e.g. 3"
           />
+          <p className="mt-1 text-xs text-gray-400">
+            Jobs requiring more years of experience are discarded before AI scoring. Leave blank to disable.
+          </p>
         </div>
 
         <div className="flex items-center gap-3">

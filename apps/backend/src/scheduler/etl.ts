@@ -6,7 +6,7 @@ import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
-import { scoreJob, isRelevantJob, isNegativeJob } from '../ai/ollama.js';
+import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile } from '../ai/ollama.js';
 import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
 
@@ -153,6 +153,9 @@ export async function runEtl(): Promise<void> {
 
     logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
+    const filterProfile = await getFilterProfile();
+    logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile loaded');
+
     let inserted = 0;
     let scored = 0;
     let filtered = 0;
@@ -169,10 +172,14 @@ export async function runEtl(): Promise<void> {
       }
 
       // Step 2: pre-filter — only promote relevant dev jobs
-      if (!isRelevantJob(job)) {
-        logger.debug({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: blocked irrelevant job');
+      const relevance = isRelevantJob(job, filterProfile);
+      if (!relevance.pass) {
+        logger.debug({ etl_run_id, job_id: job.id, title: job.title, reason: relevance.reason }, '[ETL] Pre-filter: blocked');
         filtered++;
         continue;
+      }
+      if (relevance.reason === 'wildcard') {
+        logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
       }
 
       // Step 3: promote to jobs table

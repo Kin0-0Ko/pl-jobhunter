@@ -62,10 +62,10 @@ if (process.argv.includes('--run-once')) {
 try {
   await server.listen({ port, host });
   startBot().catch((err) => server.log.error({ err }, 'telegram bot failed to start'));
-  cron.schedule('0 */6 * * *', () => {
+  cron.schedule('0 */3 * * *', () => {
     runEtl().catch((err) => server.log.error('[ETL] cron error:', err));
   });
-  server.log.info('[ETL] Cron scheduled: every 6 hours');
+  server.log.info('[ETL] Cron scheduled: every 3 hours');
 } catch (err) {
   server.log.error(err);
   await closePool();

@@ -27,6 +27,16 @@ const PROFILE_KEYWORDS = [
   'software engineer', 'software developer', 'web developer', 'developer',
 ];
 
+const SENIOR_TITLE_KEYWORDS = ['senior', 'lead', 'principal', 'staff', 'architect'];
+const JUNIOR_MID_SENIORITY = new Set(['junior', 'mid', 'trainee', 'intern']);
+
+const CROSS_TRAINING_PHRASES = [
+  'no previous', 'no prior', 'willing to cross-train', 'cross-train',
+  'we can teach', 'open to retraining', 'we will train', 'can teach you',
+];
+
+const EXPERIENCE_RE = /(\d+)\+?\s*(?:years?|lata?|lat)\s*(?:of\s+)?(?:experience|doświadczenia)?/gi;
+
 // Jobs matching these title keywords are deterministically scored 0 — no Ollama call
 const NEGATIVE_KEYWORDS = [
   'java ', 'java,', 'java/', '(java)', ' java)',  // java but not javascript
@@ -45,18 +55,90 @@ const NEGATIVE_KEYWORDS = [
   'pracownik', 'produkcji', 'magazyn', 'kierowca', 'spawacz',
 ];
 
-export function isRelevantJob(job: Job): boolean {
+export function isRelevantJob(
+  job: Job,
+  profile?: { target_seniority?: string[]; max_experience_years?: number },
+): { pass: boolean; reason?: string } {
+  const titleLower = job.title.toLowerCase();
+  const descLower = (job.description ?? '').toLowerCase();
+
+  // 1. Seniority check on title
+  const seniority = profile?.target_seniority ?? [];
+  if (
+    seniority.length > 0 &&
+    seniority.every(s => JUNIOR_MID_SENIORITY.has(s.toLowerCase())) &&
+    SENIOR_TITLE_KEYWORDS.some(kw => titleLower.includes(kw))
+  ) {
+    return { pass: false, reason: 'seniority' };
+  }
+
+  // 2. Cross-training wildcard (short-circuits experience + keyword checks)
+  if (job.description && CROSS_TRAINING_PHRASES.some(p => descLower.includes(p))) {
+    return { pass: true, reason: 'wildcard' };
+  }
+
+  // 3. Experience check on description
+  const maxExp = profile?.max_experience_years;
+  if (job.description && typeof maxExp === 'number') {
+    const matches = [...job.description.matchAll(EXPERIENCE_RE)];
+    if (matches.length > 0) {
+      const maxFound = Math.max(...matches.map(m => parseInt(m[1] ?? '0', 10)));
+      if (maxFound > maxExp) {
+        return { pass: false, reason: 'experience' };
+      }
+    }
+  }
+
+  // 4. Keyword check (existing logic)
   if (PROFILE_KEYWORDS.length === 0) {
     logger.warn('isRelevantJob: keyword list empty, passing all jobs');
-    return true;
+    return { pass: true };
   }
   const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
-  return PROFILE_KEYWORDS.some(kw => haystack.includes(kw));
+  if (!PROFILE_KEYWORDS.some(kw => haystack.includes(kw))) {
+    return { pass: false, reason: 'keyword' };
+  }
+
+  return { pass: true };
 }
 
 export function isNegativeJob(job: Job): boolean {
   const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
   return NEGATIVE_KEYWORDS.some(kw => haystack.includes(kw));
+}
+
+export interface FilterProfile {
+  target_seniority?: string[];
+  max_experience_years?: number;
+}
+
+export async function getFilterProfile(): Promise<FilterProfile> {
+  try {
+    const pool = await getPool();
+    const conn = await pool.getConnection();
+    try {
+      const result = await conn.execute<Record<string, unknown>>(
+        `SELECT skills, preferred_contract, search_preferences FROM user_profile WHERE id = 1`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row = result.rows?.[0];
+      if (!row) return {};
+
+      const prefs = row['SEARCH_PREFERENCES'];
+      if (!prefs) return {};
+
+      const parsed = JSON.parse(prefs as string) as Record<string, unknown>;
+      return {
+        target_seniority: Array.isArray(parsed.target_seniority) ? (parsed.target_seniority as string[]) : undefined,
+        max_experience_years: typeof parsed.max_experience_years === 'number' ? parsed.max_experience_years : undefined,
+      };
+    } finally {
+      await conn.close();
+    }
+  } catch {
+    return {};
+  }
 }
 
 async function getProfileFromDb(): Promise<string | null> {
@@ -89,30 +171,27 @@ async function getProfileFromDb(): Promise<string | null> {
 
 function buildPrompt(job: Job, userProfile: string): string {
   const descSection = job.description
-    ? `\n\nJob description:\n${job.description.slice(0, 1500)}`
+    ? `\n\nJob posting:\n${job.description.slice(0, 1500)}`
     : '';
 
-  return `Score job-profile match. Return JSON only.
+  return `You are a metadata extraction tool. Extract facts about what the company requires.
+Do NOT write in first person. Never say "I am", "I have", or "I can".
+Output ONLY valid JSON. No markdown, no <think> tags, no explanation text.
 
 User skills: ${userProfile}
+Job: ${job.title} at ${job.company}${descSection}
 
-Job title: ${job.title}
-Company: ${job.company}${descSection}
+Extract these fields about the COMPANY's requirements:
+- match_score: integer 0-100 (how well user skills match this posting)
+- summary: one sentence describing what the company seeks, written in third person
+- tech_stack: array of technology strings explicitly named in the posting (empty array if none)
 
-Rules:
-- match_score: 0-100 integer. Base it on skill overlap between user skills and job title/description.
-- If job needs Java, .NET, C#, Python, PHP, Ruby, Scala, Kotlin — score 0-15 max (user has none).
-- If job needs TypeScript, JavaScript, Node.js, React — score 60-100 based on seniority fit.
-- tech_stack: list only technologies explicitly named in the job title or description. Empty array if none visible.
-- summary: one sentence, describe the role factually.
-
-Return this exact JSON:
-{"match_score": <integer>, "summary": "<string>", "tech_stack": [<strings>]}`;
+Return exactly: {"match_score":<int>,"summary":"<string>","tech_stack":[<strings>]}`;
 }
 
 async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
-  const model = process.env.OLLAMA_MODEL ?? 'qwen3:5b';
+  const model = process.env.OLLAMA_MODEL ?? 'qwen2.5:0.5b';
 
   const res = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
@@ -131,6 +210,11 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
     !Array.isArray(parsed.tech_stack)
   ) {
     throw new Error('Ollama response missing required fields');
+  }
+
+  // Oracle CLOB treats '' as NULL — enforce non-empty fallback before any DB insert
+  if (!parsed.summary || parsed.summary.trim() === '') {
+    parsed.summary = 'Metadata extraction failed - pending manual review';
   }
 
   // Oracle CLOB treats '' as NULL — use single space as non-null placeholder
