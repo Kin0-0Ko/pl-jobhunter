@@ -1,1 +1,1 @@
-export type { JobStatus, Job, JobWithAnalysis, UserProfile } from './types.js';
+export type { JobStatus, Job, JobWithAnalysis, UserProfile, RawJob } from './types.js';

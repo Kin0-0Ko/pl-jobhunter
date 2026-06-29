@@ -1,9 +1,11 @@
+import { useRef } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import type { JobWithAnalysis } from '@pl-jobhunter/shared';
 
 interface Props {
   job: JobWithAnalysis;
+  onOpen?: (job: JobWithAnalysis) => void;
 }
 
 function formatSalary(min: number | null, max: number | null, currency: string): string | null {
@@ -12,10 +14,11 @@ function formatSalary(min: number | null, max: number | null, currency: string):
   return `${parts.join('–')} ${currency}`;
 }
 
-export function JobCard({ job }: Props) {
+export function JobCard({ job, onOpen }: Props) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: job.id,
   });
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -32,6 +35,14 @@ export function JobCard({ job }: Props) {
       {...listeners}
       {...attributes}
       className="bg-white rounded-lg shadow p-4 mb-3 cursor-grab active:cursor-grabbing border border-gray-200"
+      onPointerDown={(e) => { pointerStart.current = { x: e.clientX, y: e.clientY }; }}
+      onPointerUp={(e) => {
+        if (!pointerStart.current || !onOpen) return;
+        const dx = e.clientX - pointerStart.current.x;
+        const dy = e.clientY - pointerStart.current.y;
+        if (Math.sqrt(dx * dx + dy * dy) < 5) onOpen(job);
+        pointerStart.current = null;
+      }}
     >
       <div className="flex justify-between items-start mb-1">
         <h3 className="font-semibold text-gray-900 text-sm leading-tight">{job.title}</h3>

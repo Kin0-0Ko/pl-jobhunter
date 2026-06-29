@@ -15,9 +15,10 @@ const COLUMN_LABELS: Record<JobStatus, string> = {
 interface Props {
   status: JobStatus;
   jobs: JobWithAnalysis[];
+  onOpen: (job: JobWithAnalysis) => void;
 }
 
-export function KanbanColumn({ status, jobs }: Props) {
+export function KanbanColumn({ status, jobs, onOpen }: Props) {
   const { isOver, setNodeRef } = useDroppable({ id: status });
 
   return (
@@ -38,7 +39,7 @@ export function KanbanColumn({ status, jobs }: Props) {
         }`}
       >
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} />
+          <JobCard key={job.id} job={job} onOpen={onOpen} />
         ))}
       </div>
     </div>

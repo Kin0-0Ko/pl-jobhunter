@@ -6,9 +6,10 @@ import { FilterBar } from './components/FilterBar.js';
 import { AnalyticsWidget } from './components/AnalyticsWidget.js';
 import { ProfileForm } from './components/ProfileForm.js';
 import { ErrorState } from './components/ErrorState.js';
+import { RawJobsPage } from './components/RawJobsPage.js';
 import { triggerEtl } from './api/client.js';
 
-type Tab = 'board' | 'profile';
+type Tab = 'board' | 'raw' | 'profile';
 
 export function App() {
   const { jobs, loading, error, updateStatus, refetch } = useJobs();
@@ -64,6 +65,16 @@ export function App() {
             Board
           </button>
           <button
+            onClick={() => setActiveTab('raw')}
+            className={`px-3 py-1.5 text-sm rounded font-medium ${
+              activeTab === 'raw'
+                ? 'bg-blue-100 text-blue-700'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Raw Jobs
+          </button>
+          <button
             onClick={() => setActiveTab('profile')}
             className={`px-3 py-1.5 text-sm rounded font-medium ${
               activeTab === 'profile'
@@ -89,6 +100,7 @@ export function App() {
           </div>
         </>
       )}
+      {activeTab === 'raw' && <RawJobsPage />}
       {activeTab === 'profile' && <ProfileForm />}
     </div>
   );

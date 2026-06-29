@@ -3,6 +3,24 @@ import type { Job, JobWithAnalysis, JobStatus } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import { getPool } from '../config/database.js';
 
+const rawJobSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    title: { type: 'string' },
+    company: { type: 'string' },
+    url: { type: 'string' },
+    source: { type: 'string' },
+    description: { type: ['string', 'null'] },
+    salary_b2b_min: { type: ['number', 'null'] },
+    salary_b2b_max: { type: ['number', 'null'] },
+    salary_uop_min: { type: ['number', 'null'] },
+    salary_uop_max: { type: ['number', 'null'] },
+    currency: { type: 'string' },
+    created_at: { type: 'string' },
+  },
+};
+
 const JOB_STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ARCHIVED'];
 
 const jobWithAnalysisSchema = {
@@ -132,6 +150,63 @@ export async function jobsRoutes(fastify: FastifyInstance): Promise<void> {
         }
 
         return reply.send({ id, status: status as JobStatus });
+      } finally {
+        await conn.close();
+      }
+    },
+  );
+
+  fastify.get<{ Querystring: { limit?: string; offset?: string } }>(
+    '/api/raw-jobs',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'string' },
+            offset: { type: 'string' },
+          },
+        },
+        response: { 200: { type: 'array', items: rawJobSchema } },
+      },
+    },
+    async (request, reply) => {
+      const limit = Math.min(200, Math.max(1, Number(request.query.limit ?? 100)));
+      const offset = Math.max(0, Number(request.query.offset ?? 0));
+
+      const pool = await getPool();
+      const conn = await pool.getConnection();
+      try {
+        const result = await conn.execute<Record<string, unknown>>(
+          `SELECT id, title, company, url, source, description,
+                  salary_b2b_min, salary_b2b_max, salary_uop_min, salary_uop_max,
+                  currency, created_at
+           FROM raw_jobs
+           ORDER BY created_at DESC
+           OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY`,
+          { offset, limit },
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: { DESCRIPTION: { type: oracledb.STRING } },
+          },
+        );
+
+        const rows = (result.rows ?? []).map((row) => ({
+          id: row['ID'] as string,
+          title: row['TITLE'] as string,
+          company: row['COMPANY'] as string,
+          url: row['URL'] as string,
+          source: row['SOURCE'] as string,
+          description: row['DESCRIPTION'] as string | null,
+          salary_b2b_min: row['SALARY_B2B_MIN'] as number | null,
+          salary_b2b_max: row['SALARY_B2B_MAX'] as number | null,
+          salary_uop_min: row['SALARY_UOP_MIN'] as number | null,
+          salary_uop_max: row['SALARY_UOP_MAX'] as number | null,
+          currency: row['CURRENCY'] as string,
+          created_at: (row['CREATED_AT'] as Date).toISOString(),
+        }));
+
+        return reply.send(rows);
       } finally {
         await conn.close();
       }

@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { JobStatus } from '@pl-jobhunter/shared';
+import type { JobStatus, JobWithAnalysis } from '@pl-jobhunter/shared';
 import type { UseJobsResult } from '../hooks/useJobs.js';
 import { KanbanColumn } from './KanbanColumn.js';
+import { JobDetailModal } from './JobDetailModal.js';
 
 const STATUSES: JobStatus[] = ['NEW', 'FAVORITE', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'ARCHIVED'];
 
@@ -12,6 +14,7 @@ interface Props {
 
 export function KanbanBoard({ jobs, updateStatus }: Props) {
   const sensors = useSensors(useSensor(PointerSensor));
+  const [selected, setSelected] = useState<JobWithAnalysis | null>(null);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -25,16 +28,20 @@ export function KanbanBoard({ jobs, updateStatus }: Props) {
   }
 
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="flex gap-4 p-6 overflow-x-auto min-h-screen">
-        {STATUSES.map((status) => (
-          <KanbanColumn
-            key={status}
-            status={status}
-            jobs={jobs.filter((j) => j.status === status)}
-          />
-        ))}
-      </div>
-    </DndContext>
+    <>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <div className="flex gap-4 p-6 overflow-x-auto min-h-screen">
+          {STATUSES.map((status) => (
+            <KanbanColumn
+              key={status}
+              status={status}
+              jobs={jobs.filter((j) => j.status === status)}
+              onOpen={setSelected}
+            />
+          ))}
+        </div>
+      </DndContext>
+      {selected && <JobDetailModal job={selected} onClose={() => setSelected(null)} />}
+    </>
   );
 }

@@ -40,3 +40,18 @@ export type JobWithAnalysis = Job & {
   tech_stack: string[] | null;
   why_good: string | null;
 };
+
+export interface RawJob {
+  id: string;
+  title: string;
+  company: string;
+  url: string;
+  source: string;
+  description: string | null;
+  salary_b2b_min: number | null;
+  salary_b2b_max: number | null;
+  salary_uop_min: number | null;
+  salary_uop_max: number | null;
+  currency: string;
+  created_at: string;
+}

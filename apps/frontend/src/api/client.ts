@@ -1,4 +1,4 @@
-import type { JobWithAnalysis, JobStatus, UserProfile } from '@pl-jobhunter/shared';
+import type { JobWithAnalysis, JobStatus, UserProfile, RawJob } from '@pl-jobhunter/shared';
 
 const API_TOKEN = import.meta.env['VITE_API_TOKEN'] as string;
 const BASE_URL = import.meta.env['VITE_API_BASE_URL'] ?? '';
@@ -39,6 +39,12 @@ export async function putProfile(data: Omit<UserProfile, 'updated_at'>): Promise
   });
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json() as Promise<UserProfile>;
+}
+
+export async function getRawJobs(limit = 100, offset = 0): Promise<RawJob[]> {
+  const res = await fetch(`${BASE_URL}/api/raw-jobs?limit=${limit}&offset=${offset}`, { headers: headers() });
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json() as Promise<RawJob[]>;
 }
 
 export async function triggerEtl(): Promise<void> {
