@@ -25,29 +25,33 @@ const mockJob: Job = {
   created_at: new Date().toISOString(),
 };
 
-const validResponse = {
-  match_score: 85,
-  summary: 'TypeScript role at a mid-size company',
+// Two-pass responses: pass1 = {summary, tech_stack}, pass2 = {match_score}
+const pass1Response = {
+  summary: 'The company builds TypeScript microservices for fintech clients.',
   tech_stack: ['TypeScript', 'Node.js'],
-  why_good: 'Matches senior TS profile with remote B2B',
 };
+const pass2Response = { match_score: 85 };
 
-describe('scoreJob()', () => {
-  it('returns parsed score result on valid response', async () => {
+describe('scoreJob() — two-pass', () => {
+  it('returns merged result on both passes succeeding', async () => {
+    let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
-        HttpResponse.json({ response: JSON.stringify(validResponse) })
-      )
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
+        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
+      })
     );
 
     const result = await scoreJob(mockJob);
     expect(result.match_score).toBe(85);
+    expect(result.summary).toBe(pass1Response.summary);
     expect(result.tech_stack).toContain('TypeScript');
-    expect(typeof result.summary).toBe('string');
     expect(typeof result.why_good).toBe('string');
+    expect(callCount).toBe(2);
   });
 
-  it('returns fallback on unrepairable JSON (no retry needed, repair handles it)', async () => {
+  it('returns fallback when pass1 JSON is unrepairable (no pass2 call)', async () => {
     let callCount = 0;
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () => {
@@ -58,10 +62,10 @@ describe('scoreJob()', () => {
 
     const result = await scoreJob(mockJob);
     expect(result.match_score).toBe(-1);
-    expect(callCount).toBe(1);
+    expect(callCount).toBe(1); // pass1 fails immediately, no retry (repair handles it), no pass2
   });
 
-  it('retries once on HTTP error and returns fallback on second failure', async () => {
+  it('retries pass1 once on HTTP error, returns fallback on second failure', async () => {
     let callCount = 0;
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () => {
@@ -72,30 +76,58 @@ describe('scoreJob()', () => {
 
     const result = await scoreJob(mockJob);
     expect(result.match_score).toBe(-1);
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(2); // pass1 attempt + pass1 retry, both fail → fallback, no pass2
   });
 
-  it('succeeds on second attempt after first failure', async () => {
+  it('pass1 succeeds on retry, then pass2 runs', async () => {
     let callCount = 0;
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () => {
         callCount++;
-        if (callCount === 1) {
-          return HttpResponse.json({ error: 'timeout' }, { status: 503 });
-        }
-        return HttpResponse.json({ response: JSON.stringify(validResponse) });
+        if (callCount === 1) return HttpResponse.json({ error: 'timeout' }, { status: 503 });
+        if (callCount === 2) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
+        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
       })
     );
 
     const result = await scoreJob(mockJob);
     expect(result.match_score).toBe(85);
-    expect(callCount).toBe(2);
+    expect(result.summary).toBe(pass1Response.summary);
+    expect(callCount).toBe(3); // pass1 fail + pass1 retry OK + pass2
+  });
+
+  it('returns pass1 summary with match_score -1 when pass2 fails', async () => {
+    let callCount = 0;
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
+        return HttpResponse.json({ error: 'overload' }, { status: 503 });
+      })
+    );
+
+    const result = await scoreJob(mockJob);
+    // pass1 succeeded so we have the real summary, but match_score is -1 from failed pass2
+    expect(result.match_score).toBe(-1);
+    expect(result.summary).toBe(pass1Response.summary);
+    expect(callCount).toBe(3); // pass2 attempt + pass2 retry, both fail
+  });
+
+  it('returns fallback when pass1 summary is first-person inverted', async () => {
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () =>
+        HttpResponse.json({ response: JSON.stringify({ summary: 'I am a TypeScript developer seeking remote work.', tech_stack: [] }) })
+      )
+    );
+
+    const result = await scoreJob(mockJob);
+    expect(result.match_score).toBe(-1);
   });
 });
 
 // T010: scoreJob fallback contract + normalizeScore + empty summary enforcement
 describe('scoreJob() — fallback contract (T010)', () => {
-  it('returns fallback record on unrepairable JSON after retry', async () => {
+  it('returns fallback record (match_score -1, non-empty summary) when pass1 JSON unrepairable', async () => {
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () =>
         HttpResponse.json({ response: 'not valid json {{{' })
@@ -106,7 +138,7 @@ describe('scoreJob() — fallback contract (T010)', () => {
     expect(result.summary.trim()).not.toBe('');
   });
 
-  it('returns fallback record on HTTP error after retry', async () => {
+  it('returns fallback record when pass1 HTTP errors on both attempts', async () => {
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () =>
         HttpResponse.json({ error: 'server error' }, { status: 500 })
@@ -117,24 +149,19 @@ describe('scoreJob() — fallback contract (T010)', () => {
     expect(result.summary.trim()).not.toBe('');
   });
 
-  it('enforces non-empty summary when model returns empty string', async () => {
+  it('uses job title as summary fallback when pass1 returns empty summary string', async () => {
+    let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
-        HttpResponse.json({ response: JSON.stringify({ match_score: 70, summary: '', tech_stack: [] }) })
-      )
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify({ summary: '', tech_stack: [] }) });
+        return HttpResponse.json({ response: JSON.stringify({ match_score: 70 }) });
+      })
     );
     const result = await scoreJob(mockJob);
+    // empty summary → fallback to "title at company"
     expect(result.summary.trim()).not.toBe('');
-  });
-
-  it('returns fallback when summary is first-person inverted', async () => {
-    server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
-        HttpResponse.json({ response: JSON.stringify({ match_score: 70, summary: 'I am a TypeScript developer looking for a role', tech_stack: [] }) })
-      )
-    );
-    const result = await scoreJob(mockJob);
-    expect(result.match_score).toBe(-1);
+    expect(result.summary).toContain(mockJob.title);
   });
 });
 

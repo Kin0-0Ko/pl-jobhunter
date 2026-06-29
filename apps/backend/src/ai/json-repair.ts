@@ -8,6 +8,10 @@ export type RepairResult =
   | { ok: true; value: RawModelObject }
   | { ok: false; reason: 'no-json' | 'unrepairable' | 'invalid-shape' };
 
+export type LooseRepairResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; reason: 'no-json' | 'unrepairable' };
+
 function extractFirstObject(s: string): string | null {
   const start = s.indexOf('{');
   if (start === -1) return null;
@@ -118,6 +122,43 @@ export function repairAndParse(raw: string): RepairResult {
     } catch {
       return { ok: false, reason: 'unrepairable' };
     }
+  } catch {
+    return { ok: false, reason: 'unrepairable' };
+  }
+}
+
+export function repairAndParseLoose(raw: string): LooseRepairResult {
+  try {
+    if (!raw || typeof raw !== 'string') return { ok: false, reason: 'no-json' };
+    const stripped = stripWrappers(raw);
+    if (!stripped.includes('{')) return { ok: false, reason: 'no-json' };
+
+    const tryLoose = (s: string): Record<string, unknown> | null => {
+      try {
+        const v = JSON.parse(s) as unknown;
+        if (v !== null && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+        return null;
+      } catch { return null; }
+    };
+
+    const direct = tryLoose(stripped);
+    if (direct) return { ok: true, value: direct };
+
+    const repairedFull = repairAttempt(stripped);
+    const fromFull = tryLoose(repairedFull);
+    if (fromFull) return { ok: true, value: fromFull };
+
+    const extracted = extractFirstObject(stripped);
+    if (!extracted) return { ok: false, reason: 'unrepairable' };
+
+    const fromExtract = tryLoose(extracted);
+    if (fromExtract) return { ok: true, value: fromExtract };
+
+    const repaired = repairAttempt(extracted);
+    const fromRepair = tryLoose(repaired);
+    if (fromRepair) return { ok: true, value: fromRepair };
+
+    return { ok: false, reason: 'unrepairable' };
   } catch {
     return { ok: false, reason: 'unrepairable' };
   }

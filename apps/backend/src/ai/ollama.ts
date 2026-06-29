@@ -2,7 +2,7 @@ import type { Job } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import pino from 'pino';
 import pLimit from 'p-limit';
-import { repairAndParse } from './json-repair.js';
+import { repairAndParse, repairAndParseLoose } from './json-repair.js';
 import { getPool } from '../config/database.js';
 
 // Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
@@ -225,85 +225,131 @@ async function getProfileFromDb(): Promise<string | null> {
   }
 }
 
-function buildPrompt(job: Job, userProfile: string): string {
-  const desc = job.description ? job.description.slice(0, 1200) : '';
-  const descSection = desc ? `\n\nPosting text:\n${desc}` : '';
-
-  return `Extract metadata from this job posting. Output ONLY valid JSON, no markdown, no explanation.
-
-Job: ${job.title} at ${job.company}${descSection}
-
-Candidate skills (for scoring only): ${userProfile}
-
-Rules:
-- summary: ONE sentence about what THE COMPANY requires (not the candidate). Start with "The company" or "The role". Never use "I", "my", "user", "candidate".
-- match_score: 0-100 integer. How well candidate skills match company requirements.
-- tech_stack: only technologies explicitly named in the posting text. Empty array if none listed.
-
-Return exactly: {"match_score":<int>,"summary":"<string>","tech_stack":[<strings>]}`;
+interface Pass1Result {
+  summary: string;
+  tech_stack: string[];
 }
 
-async function callOllama(prompt: string): Promise<OllamaScoreResult> {
+function buildPass1Prompt(job: Job): string {
+  const desc = job.description ? job.description.slice(0, 800) : '';
+  const descSection = desc ? `\n\nPosting:\n${desc}` : '';
+  return `Extract metadata from this job posting. Output ONLY valid JSON, no markdown.
+
+Title: ${job.title}
+Company: ${job.company}${descSection}
+
+Return exactly: {"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>]}`;
+}
+
+function buildPass2Prompt(pass1: Pass1Result, userProfile: string): string {
+  const tech = pass1.tech_stack.length > 0 ? pass1.tech_stack.join(', ') : 'not specified';
+  return `Score candidate fit for this role. Output ONLY valid JSON, no markdown.
+
+Role: ${pass1.summary}
+Technologies required: ${tech}
+Candidate skills: ${userProfile}
+
+Return exactly: {"match_score":<integer 0-100>}`;
+}
+
+async function callOllamaRaw(prompt: string, numPredict: number): Promise<string> {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
   const model = process.env.OLLAMA_MODEL ?? 'qwen2.5:0.5b';
 
   const res = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: 400 } }),
+    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict } }),
   });
 
   if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
-
   const data = (await res.json()) as { response: string };
+  return data.response;
+}
 
-  const repairResult = repairAndParse(data.response);
-  if (!repairResult.ok) {
-    logger.warn({ reason: repairResult.reason }, '[ETL] callOllama: JSON repair failed — returning fallback');
-    return buildFallbackRecord();
+async function callPass1(job: Job): Promise<Pass1Result | null> {
+  const prompt = buildPass1Prompt(job);
+  let raw: string;
+  try {
+    raw = await ollamaLimit(() => callOllamaRaw(prompt, 250));
+  } catch (err) {
+    logger.warn({ err, job_id: job.id }, '[ETL] pass1: Ollama HTTP error, retrying');
+    try {
+      raw = await ollamaLimit(() => callOllamaRaw(prompt, 250));
+    } catch (retryErr) {
+      logger.error({ err: retryErr, job_id: job.id }, '[ETL] pass1: retry failed');
+      return null;
+    }
   }
 
-  const { value } = repairResult;
+  const result = repairAndParseLoose(raw);
+  if (!result.ok) {
+    logger.warn({ reason: result.reason, job_id: job.id }, '[ETL] pass1: JSON repair failed');
+    return null;
+  }
 
-  const rawSummary = value.summary?.trim() ?? '';
+  const v = result.value;
+  const rawSummary = typeof v['summary'] === 'string' ? v['summary'].trim() : '';
+
   if (isFirstPersonInverted(rawSummary)) {
-    logger.warn('[ETL] callOllama: first-person inversion detected — returning fallback');
-    return buildFallbackRecord();
+    logger.warn({ job_id: job.id }, '[ETL] pass1: first-person inversion detected');
+    return null;
   }
 
   return {
-    match_score: normalizeScore(value.match_score),
-    summary: rawSummary || 'Metadata extraction failed - pending manual review',
-    tech_stack: Array.isArray(value.tech_stack) ? value.tech_stack : [],
-    why_good: ' ',
+    summary: rawSummary || `${job.title} at ${job.company}`,
+    tech_stack: Array.isArray(v['tech_stack']) ? (v['tech_stack'] as string[]) : [],
   };
+}
+
+async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string): Promise<number> {
+  const prompt = buildPass2Prompt(pass1, userProfile);
+  let raw: string;
+  try {
+    raw = await ollamaLimit(() => callOllamaRaw(prompt, 50));
+  } catch (err) {
+    logger.warn({ err, job_id: jobId }, '[ETL] pass2: Ollama HTTP error, retrying');
+    try {
+      raw = await ollamaLimit(() => callOllamaRaw(prompt, 50));
+    } catch (retryErr) {
+      logger.error({ err: retryErr, job_id: jobId }, '[ETL] pass2: retry failed');
+      return -1;
+    }
+  }
+
+  const result = repairAndParseLoose(raw);
+  if (!result.ok) {
+    logger.warn({ reason: result.reason, job_id: jobId }, '[ETL] pass2: JSON repair failed');
+    return -1;
+  }
+
+  const score = result.value['match_score'];
+  if (typeof score !== 'number' && typeof score !== 'string') return -1;
+  return normalizeScore(score);
 }
 
 export async function scoreJob(job: Job): Promise<OllamaScoreResult> {
   const dbProfile = await getProfileFromDb();
-  let userProfile: string;
+  const userProfile =
+    dbProfile ??
+    (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
 
-  if (dbProfile) {
-    logger.debug('ollama profile source: db');
-    userProfile = dbProfile;
-  } else {
-    logger.debug('ollama profile source: env fallback');
-    userProfile =
-      process.env.OLLAMA_USER_PROFILE ??
-      'Senior TypeScript developer interested in remote roles';
+  logger.debug({ source: dbProfile ? 'db' : 'env' }, 'ollama profile source');
+
+  const pass1 = await callPass1(job);
+  if (!pass1) {
+    logger.warn({ job_id: job.id }, '[ETL] pass1 failed — returning fallback');
+    return buildFallbackRecord();
   }
 
-  const prompt = buildPrompt(job, userProfile);
+  logger.debug({ job_id: job.id, summary: pass1.summary, tech_stack: pass1.tech_stack }, '[ETL] pass1 complete');
 
-  try {
-    return await ollamaLimit(() => callOllama(prompt));
-  } catch (err) {
-    logger.warn({ err }, 'ollama first attempt failed, retrying');
-    try {
-      return await ollamaLimit(() => callOllama(prompt));
-    } catch (retryErr) {
-      logger.error({ err: retryErr }, 'ollama retry failed — returning fallback');
-      return buildFallbackRecord();
-    }
-  }
+  const matchScore = await callPass2(pass1, userProfile, job.id);
+
+  return {
+    match_score: matchScore,
+    summary: pass1.summary,
+    tech_stack: pass1.tech_stack,
+    why_good: ' ',
+  };
 }
