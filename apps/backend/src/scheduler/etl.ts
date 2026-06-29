@@ -154,93 +154,103 @@ export async function runEtl(): Promise<void> {
     logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
     const filterProfile = await getFilterProfile();
-    logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile loaded');
+    const hasPrefs = Object.keys(filterProfile).length > 0;
+    if (hasPrefs) {
+      logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile resolved');
+    } else {
+      logger.info({ etl_run_id }, '[ETL] Filter profile: no preferences configured — all seniority/experience filters inactive');
+    }
 
     let inserted = 0;
     let scored = 0;
     let filtered = 0;
+    let fallback = 0;
     const threshold = Number(process.env.ALERT_SCORE_THRESHOLD ?? 80);
+    const chunkSize = Math.max(1, Number(process.env.ETL_CHUNK_SIZE ?? 50));
+    const total = jobs.length;
 
-    for (const job of jobs) {
-      // Step 1: persist all scraped jobs to raw_jobs staging table
-      try {
-        await mergeRawJob(job);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        logger.warn({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] raw_jobs insert failed — skipping job');
-        continue;
-      }
+    for (let chunkStart = 0; chunkStart < total; chunkStart += chunkSize) {
+      const chunk = jobs.slice(chunkStart, chunkStart + chunkSize);
+      const chunkIndex = Math.floor(chunkStart / chunkSize) + 1;
+      logger.info({ etl_run_id, chunk: chunkIndex, chunkSize: chunk.length, processed: chunkStart, total }, '[ETL] Processing chunk');
 
-      // Step 2: pre-filter — only promote relevant dev jobs
-      const relevance = isRelevantJob(job, filterProfile);
-      if (!relevance.pass) {
-        logger.debug({ etl_run_id, job_id: job.id, title: job.title, reason: relevance.reason }, '[ETL] Pre-filter: blocked');
-        filtered++;
-        continue;
-      }
-      if (relevance.reason === 'wildcard') {
-        logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
-      }
-
-      // Step 3: promote to jobs table
-      let wasInserted: boolean;
-      try {
-        wasInserted = await mergeJob(job);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        logger.error({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] DB error — aborting');
-        await sendCriticalAlert('oracle', error);
-        process.exitCode = 1;
-        return;
-      }
-
-      if (!wasInserted) continue;
-      inserted++;
-
-      // Step 4: negative blocklist — persist score 0 without Ollama call
-      if (isNegativeJob(job)) {
-        logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
+      for (const job of chunk) {
         try {
-          await persistAnalysis(job.id, 0, job.title, [], ' ');
-          scored++;
-        } catch (err) {
-          logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
+          // Step 1: persist all scraped jobs to raw_jobs staging table
+          try {
+            await mergeRawJob(job);
+          } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            logger.warn({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] raw_jobs insert failed — skipping job');
+            continue;
+          }
+
+          // Step 2: pre-filter — only promote relevant dev jobs
+          const relevance = isRelevantJob(job, filterProfile);
+          if (!relevance.pass) {
+            logger.debug({ etl_run_id, job_id: job.id, title: job.title, reason: relevance.reason }, '[ETL] Pre-filter: blocked');
+            filtered++;
+            continue;
+          }
+          if (relevance.reason === 'wildcard') {
+            logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
+          }
+
+          // Step 3: promote to jobs table
+          let wasInserted: boolean;
+          try {
+            wasInserted = await mergeJob(job);
+          } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            logger.error({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] DB error — aborting');
+            await sendCriticalAlert('oracle', error);
+            process.exitCode = 1;
+            return;
+          }
+
+          if (!wasInserted) continue;
+          inserted++;
+
+          // Step 4: negative blocklist — persist score 0 without Ollama call
+          if (isNegativeJob(job)) {
+            logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
+            try {
+              await persistAnalysis(job.id, 0, job.title, [], ' ');
+              scored++;
+            } catch (err) {
+              logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
+            }
+            continue;
+          }
+
+          // Step 5: score via Ollama — scoreJob always returns a record (fallback on failure)
+          const analysis = await scoreJob(job);
+          const isFallback = analysis.match_score === -1;
+
+          if (isFallback) {
+            await sendOllamaWarning(job.id, new Error('scoreJob returned fallback'));
+            fallback++;
+          }
+
+          try {
+            await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
+            scored++;
+            logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: isFallback }, '[ETL] Scored job');
+
+            if (!isFallback && analysis.match_score >= threshold) {
+              await sendJobAlert(job, analysis.match_score);
+            }
+          } catch (err) {
+            logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
+          }
+        } catch (jobErr) {
+          // Per-item isolation: one job's unexpected error must not abort the chunk
+          logger.warn({ etl_run_id, job_id: job.id, err: String(jobErr) }, '[ETL] Unexpected per-job error — continuing');
         }
-        continue;
-      }
-
-      // Step 5: score via Ollama
-      let analysis;
-      try {
-        analysis = await scoreJob(job);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        logger.warn({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] Ollama threw — persisting without score');
-        await sendOllamaWarning(job.id, error);
-        continue;
-      }
-
-      if (!analysis) {
-        const error = new Error('scoreJob returned null');
-        logger.warn({ etl_run_id, job_id: job.id }, '[ETL] Ollama returned null — persisting without score');
-        await sendOllamaWarning(job.id, error);
-        continue;
-      }
-
-      try {
-        await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
-        scored++;
-        logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score }, '[ETL] Scored job');
-
-        if (analysis.match_score >= threshold) {
-          await sendJobAlert(job, analysis.match_score);
-        }
-      } catch (err) {
-        logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
       }
     }
 
-    logger.info({ etl_run_id, rawTotal: jobs.length, filtered, inserted, scored }, '[ETL] Run complete');
+    logger.info({ etl_run_id, rawTotal: total, filtered, inserted, scored, fallback }, '[ETL] Run complete');
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error({ etl_run_id, err: error.message }, '[ETL] Unexpected error');

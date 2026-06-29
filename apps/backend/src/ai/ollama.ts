@@ -2,6 +2,7 @@ import type { Job } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import pino from 'pino';
 import pLimit from 'p-limit';
+import { repairAndParse } from './json-repair.js';
 import { getPool } from '../config/database.js';
 
 // Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
@@ -14,6 +15,28 @@ export interface OllamaScoreResult {
   summary: string;
   tech_stack: string[];
   why_good: string;
+}
+
+const FIRST_PERSON_RE =
+  /\b(I am|I'm|I have|I've|I can|I will|I would|my (?:background|experience|skills))\b/i;
+
+export function isFirstPersonInverted(summary: string): boolean {
+  return FIRST_PERSON_RE.test(summary);
+}
+
+export function normalizeScore(n: unknown): number {
+  const num = typeof n === 'number' ? n : Number(n);
+  if (!isFinite(num)) return 0;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+export function buildFallbackRecord(): OllamaScoreResult {
+  return {
+    match_score: -1,
+    summary: 'Analysis unavailable — pending manual review',
+    tech_stack: [],
+    why_good: ' ',
+  };
 }
 
 const PROFILE_KEYWORDS = [
@@ -113,31 +136,54 @@ export interface FilterProfile {
 }
 
 export async function getFilterProfile(): Promise<FilterProfile> {
+  const pool = await getPool().catch((dbErr: unknown) => {
+    logger.warn(
+      { err: dbErr instanceof Error ? dbErr.message : String(dbErr) },
+      '[ETL] getFilterProfile: DB pool error — applying safe default {}',
+    );
+    return null;
+  });
+  if (!pool) return {};
+
+  const conn = await pool.getConnection();
   try {
-    const pool = await getPool();
-    const conn = await pool.getConnection();
+    const result = await conn.execute<Record<string, unknown>>(
+      `SELECT skills, preferred_contract, search_preferences FROM user_profile WHERE id = 1`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    );
+    const row = result.rows?.[0];
+    if (!row) return {};
+
+    // Oracle OUT_FORMAT_OBJECT returns uppercase keys; tolerate both
+    const raw = (row['SEARCH_PREFERENCES'] ?? row['search_preferences']) as string | null | undefined;
+    if (!raw) return {};
+
     try {
-      const result = await conn.execute<Record<string, unknown>>(
-        `SELECT skills, preferred_contract, search_preferences FROM user_profile WHERE id = 1`,
-        [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const profile: FilterProfile = {};
+      if (Array.isArray(parsed.target_seniority)) {
+        profile.target_seniority = parsed.target_seniority as string[];
+      }
+      if (typeof parsed.max_experience_years === 'number') {
+        profile.max_experience_years = parsed.max_experience_years;
+      }
+      return profile;
+    } catch (parseErr) {
+      logger.warn(
+        { raw, err: parseErr instanceof Error ? parseErr.message : String(parseErr) },
+        '[ETL] getFilterProfile: SEARCH_PREFERENCES is present but failed JSON.parse — applying safe default {}',
       );
-      const row = result.rows?.[0];
-      if (!row) return {};
-
-      const prefs = row['SEARCH_PREFERENCES'];
-      if (!prefs) return {};
-
-      const parsed = JSON.parse(prefs as string) as Record<string, unknown>;
-      return {
-        target_seniority: Array.isArray(parsed.target_seniority) ? (parsed.target_seniority as string[]) : undefined,
-        max_experience_years: typeof parsed.max_experience_years === 'number' ? parsed.max_experience_years : undefined,
-      };
-    } finally {
-      await conn.close();
+      return {};
     }
-  } catch {
+  } catch (dbErr) {
+    logger.warn(
+      { err: dbErr instanceof Error ? dbErr.message : String(dbErr) },
+      '[ETL] getFilterProfile: DB error — applying safe default {}',
+    );
     return {};
+  } finally {
+    await conn.close().catch(() => undefined);
   }
 }
 
@@ -189,7 +235,7 @@ Extract these fields about the COMPANY's requirements:
 Return exactly: {"match_score":<int>,"summary":"<string>","tech_stack":[<strings>]}`;
 }
 
-async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
+async function callOllama(prompt: string): Promise<OllamaScoreResult> {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
   const model = process.env.OLLAMA_MODEL ?? 'qwen2.5:0.5b';
 
@@ -202,28 +248,30 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
   if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
 
   const data = (await res.json()) as { response: string };
-  const parsed = JSON.parse(data.response) as OllamaScoreResult;
 
-  if (
-    typeof parsed.match_score !== 'number' ||
-    typeof parsed.summary !== 'string' ||
-    !Array.isArray(parsed.tech_stack)
-  ) {
-    throw new Error('Ollama response missing required fields');
+  const repairResult = repairAndParse(data.response);
+  if (!repairResult.ok) {
+    logger.warn({ reason: repairResult.reason }, '[ETL] callOllama: JSON repair failed — returning fallback');
+    return buildFallbackRecord();
   }
 
-  // Oracle CLOB treats '' as NULL — enforce non-empty fallback before any DB insert
-  if (!parsed.summary || parsed.summary.trim() === '') {
-    parsed.summary = 'Metadata extraction failed - pending manual review';
+  const { value } = repairResult;
+
+  const rawSummary = value.summary?.trim() ?? '';
+  if (isFirstPersonInverted(rawSummary)) {
+    logger.warn('[ETL] callOllama: first-person inversion detected — returning fallback');
+    return buildFallbackRecord();
   }
 
-  // Oracle CLOB treats '' as NULL — use single space as non-null placeholder
-  parsed.why_good = parsed.why_good || ' ';
-
-  return parsed;
+  return {
+    match_score: normalizeScore(value.match_score),
+    summary: rawSummary || 'Metadata extraction failed - pending manual review',
+    tech_stack: Array.isArray(value.tech_stack) ? value.tech_stack : [],
+    why_good: ' ',
+  };
 }
 
-export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
+export async function scoreJob(job: Job): Promise<OllamaScoreResult> {
   const dbProfile = await getProfileFromDb();
   let userProfile: string;
 
@@ -246,8 +294,8 @@ export async function scoreJob(job: Job): Promise<OllamaScoreResult | null> {
     try {
       return await ollamaLimit(() => callOllama(prompt));
     } catch (retryErr) {
-      logger.error({ err: retryErr }, 'ollama retry failed');
-      return null;
+      logger.error({ err: retryErr }, 'ollama retry failed — returning fallback');
+      return buildFallbackRecord();
     }
   }
 }
