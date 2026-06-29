@@ -133,8 +133,8 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
     throw new Error('Ollama response missing required fields');
   }
 
-  // why_good no longer requested from model — set empty string for DB compat
-  parsed.why_good = parsed.why_good ?? '';
+  // Oracle CLOB treats '' as NULL — use single space as non-null placeholder
+  parsed.why_good = parsed.why_good || ' ';
 
   return parsed;
 }

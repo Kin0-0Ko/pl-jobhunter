@@ -45,7 +45,7 @@ const CREATE_AI_ANALYSIS = `
     match_score NUMBER NOT NULL,
     summary CLOB NOT NULL,
     tech_stack CLOB NOT NULL,
-    why_good CLOB NOT NULL,
+    why_good CLOB,
     CONSTRAINT fk_job FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
   )
 `;

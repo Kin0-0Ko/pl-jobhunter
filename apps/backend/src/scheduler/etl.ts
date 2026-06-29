@@ -194,7 +194,7 @@ export async function runEtl(): Promise<void> {
       if (isNegativeJob(job)) {
         logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
         try {
-          await persistAnalysis(job.id, 0, job.title, [], '');
+          await persistAnalysis(job.id, 0, job.title, [], ' ');
           scored++;
         } catch (err) {
           logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
