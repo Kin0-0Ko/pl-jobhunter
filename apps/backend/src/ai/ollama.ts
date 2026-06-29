@@ -27,6 +27,24 @@ const PROFILE_KEYWORDS = [
   'software engineer', 'software developer', 'web developer', 'developer',
 ];
 
+// Jobs matching these title keywords are deterministically scored 0 — no Ollama call
+const NEGATIVE_KEYWORDS = [
+  'java ', 'java,', 'java/', '(java)', ' java)',  // java but not javascript
+  '.net', 'dotnet', 'c# ', 'c#,', 'c#/',
+  'python', 'django', 'flask',
+  'php', 'laravel', 'symfony',
+  'ruby', 'rails',
+  'scala', 'kotlin', 'golang', ' go ',
+  'rust developer', 'rust engineer',
+  'ios developer', 'ios engineer', 'swift developer',
+  'android developer', 'android engineer',
+  'data engineer', 'data scientist', 'ml engineer', 'machine learning',
+  'embedded', 'firmware', 'fpga',
+  'sap ', 'salesforce', 'dynamics',
+  'qa engineer', 'qa tester', 'test engineer', 'tester',
+  'pracownik', 'produkcji', 'magazyn', 'kierowca', 'spawacz',
+];
+
 export function isRelevantJob(job: Job): boolean {
   if (PROFILE_KEYWORDS.length === 0) {
     logger.warn('isRelevantJob: keyword list empty, passing all jobs');
@@ -34,6 +52,11 @@ export function isRelevantJob(job: Job): boolean {
   }
   const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
   return PROFILE_KEYWORDS.some(kw => haystack.includes(kw));
+}
+
+export function isNegativeJob(job: Job): boolean {
+  const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
+  return NEGATIVE_KEYWORDS.some(kw => haystack.includes(kw));
 }
 
 async function getProfileFromDb(): Promise<string | null> {
@@ -69,25 +92,22 @@ function buildPrompt(job: Job, userProfile: string): string {
     ? `\n\nJob description:\n${job.description.slice(0, 1500)}`
     : '';
 
-  return `You are a strict job-match scorer. Score based ONLY on actual skill overlap between the user profile and the job.
+  return `Score job-profile match. Return JSON only.
 
-Scoring rules:
-- match_score: integer 0-100 (0 = zero overlap, 100 = perfect match)
-- Score below 30 if core skills do not match
-- If the job title suggests a non-developer role (production worker, CNC operator, auditor, product manager, accountant, analyst without tech context), return match_score: 0
-- Do NOT invent technologies not mentioned in the job title or description
+User skills: ${userProfile}
 
-Return a JSON object with these exact fields:
-- match_score: integer 0-100
-- summary: one sentence describing the actual role
-- tech_stack: array of technology strings explicitly mentioned in the job (empty array if none)
-- why_good: one sentence on actual skill overlap, or explain the mismatch if score is below 50
+Job title: ${job.title}
+Company: ${job.company}${descSection}
 
-User profile: ${userProfile}
+Rules:
+- match_score: 0-100 integer. Base it on skill overlap between user skills and job title/description.
+- If job needs Java, .NET, C#, Python, PHP, Ruby, Scala, Kotlin — score 0-15 max (user has none).
+- If job needs TypeScript, JavaScript, Node.js, React — score 60-100 based on seniority fit.
+- tech_stack: list only technologies explicitly named in the job title or description. Empty array if none visible.
+- summary: one sentence, describe the role factually.
 
-Job: ${job.title} at ${job.company}${descSection}
-
-Respond ONLY with valid JSON. No markdown, no <think> tags, no explanation outside the JSON.`;
+Return this exact JSON:
+{"match_score": <integer>, "summary": "<string>", "tech_stack": [<strings>]}`;
 }
 
 async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
@@ -108,11 +128,13 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
   if (
     typeof parsed.match_score !== 'number' ||
     typeof parsed.summary !== 'string' ||
-    !Array.isArray(parsed.tech_stack) ||
-    typeof parsed.why_good !== 'string'
+    !Array.isArray(parsed.tech_stack)
   ) {
     throw new Error('Ollama response missing required fields');
   }
+
+  // why_good no longer requested from model — set empty string for DB compat
+  parsed.why_good = parsed.why_good ?? '';
 
   return parsed;
 }

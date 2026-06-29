@@ -6,7 +6,7 @@ import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
-import { scoreJob, isRelevantJob } from '../ai/ollama.js';
+import { scoreJob, isRelevantJob, isNegativeJob } from '../ai/ollama.js';
 import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import type { Job } from '@pl-jobhunter/shared';
 
@@ -190,7 +190,19 @@ export async function runEtl(): Promise<void> {
       if (!wasInserted) continue;
       inserted++;
 
-      // Step 4: score via Ollama
+      // Step 4: negative blocklist — persist score 0 without Ollama call
+      if (isNegativeJob(job)) {
+        logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
+        try {
+          await persistAnalysis(job.id, 0, job.title, [], '');
+          scored++;
+        } catch (err) {
+          logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
+        }
+        continue;
+      }
+
+      // Step 5: score via Ollama
       let analysis;
       try {
         analysis = await scoreJob(job);
