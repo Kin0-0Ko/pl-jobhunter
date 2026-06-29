@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'crypto';
 import pino from 'pino';
+import oracledb from 'oracledb';
 import { getPool } from '../config/database.js';
 import { fetchJustJoin } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
@@ -108,6 +109,9 @@ async function persistAnalysis(
       `MERGE INTO ai_analysis dst
        USING (SELECT :job_id AS job_id FROM dual) src
        ON (dst.job_id = src.job_id)
+       WHEN MATCHED THEN UPDATE SET
+         match_score = :match_score, summary = :summary,
+         tech_stack = :tech_stack, why_good = :why_good
        WHEN NOT MATCHED THEN INSERT (job_id, match_score, summary, tech_stack, why_good)
        VALUES (:job_id, :match_score, :summary, :tech_stack, :why_good)`,
       {
@@ -119,6 +123,21 @@ async function persistAnalysis(
       },
       { autoCommit: true },
     );
+  } finally {
+    await conn.close();
+  }
+}
+
+async function checkAnalysisExists(jobId: string): Promise<boolean> {
+  const pool = await getPool();
+  const conn = await pool.getConnection();
+  try {
+    const result = await conn.execute<[number]>(
+      `SELECT COUNT(*) FROM ai_analysis WHERE job_id = :job_id`,
+      { job_id: jobId },
+      { outFormat: oracledb.OUT_FORMAT_ARRAY },
+    );
+    return ((result.rows?.[0]?.[0] as number) ?? 0) > 0;
   } finally {
     await conn.close();
   }
@@ -208,8 +227,14 @@ export async function runEtl(): Promise<void> {
             return;
           }
 
-          if (!wasInserted) continue;
-          inserted++;
+          if (wasInserted) {
+            inserted++;
+          } else {
+            // Job already exists — skip if it already has a valid analysis row
+            const hasAnalysis = await checkAnalysisExists(job.id);
+            if (hasAnalysis) continue;
+            logger.info({ etl_run_id, job_id: job.id }, '[ETL] Existing job missing analysis — re-scoring');
+          }
 
           // Step 4: negative blocklist — persist score 0 without Ollama call
           if (isNegativeJob(job)) {

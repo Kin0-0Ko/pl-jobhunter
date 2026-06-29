@@ -15,6 +15,7 @@ interface JJOffer {
   title: string;
   companyName: string;
   slug: string;
+  categoryName?: string;
   employmentTypes: JJEmploymentType[];
 }
 
@@ -24,6 +25,17 @@ interface JJResponse {
 }
 
 const MAX_PAGES = 5;
+
+// JustJoin slug format: company-title-city-CATEGORY[-hash]
+// Extract the second-to-last segment (before optional 8-char hex hash)
+function slugCategory(slug: string): string {
+  const parts = slug.split('-');
+  if (parts.length < 2) return '';
+  const last = parts[parts.length - 1] ?? '';
+  // If last part looks like a hex hash (8 chars, all hex digits), skip it
+  const hasHash = /^[0-9a-f]{8}$/i.test(last);
+  return hasHash ? (parts[parts.length - 2] ?? '') : last;
+}
 
 export async function fetchJustJoin(): Promise<Job[]> {
   try {
@@ -52,12 +64,15 @@ export async function fetchJustJoin(): Promise<Job[]> {
           const b2b = offer.employmentTypes?.find((e) => e.type === 'b2b');
           const uop = offer.employmentTypes?.find((e) => e.type === 'permanent');
 
+          // Include category as description stub so keyword/negative filters see it
+          const category = offer.categoryName?.toLowerCase() ?? slugCategory(offer.slug);
           jobs.push({
             id: `jj-${offer.guid}`,
             title: offer.title,
             company: offer.companyName,
             url: `https://justjoin.it/offers/${offer.slug}`,
             source: 'justjoin',
+            description: category ? `[category:${category}]` : undefined,
             salary_b2b_min: b2b?.fromPln ?? null,
             salary_b2b_max: b2b?.toPln ?? null,
             salary_uop_min: uop?.fromPln ?? null,
