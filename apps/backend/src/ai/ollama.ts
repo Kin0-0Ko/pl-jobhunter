@@ -150,7 +150,10 @@ export async function getFilterProfile(): Promise<FilterProfile> {
     const result = await conn.execute<Record<string, unknown>>(
       `SELECT skills, preferred_contract, search_preferences FROM user_profile WHERE id = 1`,
       [],
-      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      {
+        outFormat: oracledb.OUT_FORMAT_OBJECT,
+        fetchInfo: { SEARCH_PREFERENCES: { type: oracledb.STRING } },
+      },
     );
     const row = result.rows?.[0];
     if (!row) return {};
@@ -196,7 +199,14 @@ async function getProfileFromDb(): Promise<string | null> {
         `SELECT skills, resume_text, preferred_contract, search_preferences
          FROM user_profile WHERE id = 1`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+          fetchInfo: {
+            SKILLS: { type: oracledb.STRING },
+            RESUME_TEXT: { type: oracledb.STRING },
+            SEARCH_PREFERENCES: { type: oracledb.STRING },
+          },
+        },
       );
       const row = result.rows?.[0];
       if (!row) return null;
