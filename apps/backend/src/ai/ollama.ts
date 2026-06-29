@@ -40,17 +40,19 @@ export function buildFallbackRecord(): OllamaScoreResult {
 }
 
 const PROFILE_KEYWORDS = [
-  'typescript', 'javascript', 'node.js', 'nodejs', 'nestjs', 'nest',
-  'express', 'react', 'next.js', 'nextjs', 'redux',
-  'postgresql', 'postgres', 'mongodb', 'mongo', 'redis',
-  'rabbitmq', 'typeorm', 'aws', 'docker',
-  'github actions', 'ci/cd', 'cicd',
+  // Core stack — must match at least one for the job to be relevant
+  'typescript', 'javascript', 'node.js', 'nodejs', 'nestjs', 'nest.js',
+  'express', 'react', 'next.js', 'nextjs', 'redux', 'vue', 'angular',
+  'postgresql', 'postgres', 'mongodb', 'mongo', 'redis', 'typeorm',
+  'rabbitmq', 'graphql', 'rest api', 'restful',
+  'docker', 'github actions',
   'fullstack', 'full-stack', 'full stack',
-  'backend', 'frontend', 'devops',
-  'software engineer', 'software developer', 'web developer', 'developer',
+  'web developer', 'web engineer', 'frontend developer', 'frontend engineer',
+  'backend developer', 'backend engineer',
+  'node developer', 'node engineer', 'js developer', 'ts developer',
 ];
 
-const SENIOR_TITLE_KEYWORDS = ['senior', 'lead', 'principal', 'staff', 'architect'];
+const SENIOR_TITLE_KEYWORDS = ['senior', 'lead', 'principal', 'staff', 'architect', 'expert', 'manager', 'head of', 'director'];
 const JUNIOR_MID_SENIORITY = new Set(['junior', 'mid', 'trainee', 'intern']);
 
 const CROSS_TRAINING_PHRASES = [
@@ -71,10 +73,15 @@ const NEGATIVE_KEYWORDS = [
   'rust developer', 'rust engineer',
   'ios developer', 'ios engineer', 'swift developer',
   'android developer', 'android engineer',
-  'data engineer', 'data scientist', 'ml engineer', 'machine learning',
+  'react native',  // mobile, not web
+  'flutter', 'xamarin',
+  'data engineer', 'data scientist', 'ml engineer', 'machine learning', 'data analyst',
   'embedded', 'firmware', 'fpga',
-  'sap ', 'salesforce', 'dynamics',
-  'qa engineer', 'qa tester', 'test engineer', 'tester',
+  'sap ', 'salesforce', 'dynamics', 'servicenow', 'powerbi', 'power bi', 'tableau',
+  'devops engineer', 'devops specialist', 'platform engineer', 'site reliability', 'sre ',
+  'cloud engineer', 'infrastructure engineer',
+  'postgresql expert', 'database administrator', 'dba ',
+  'qa engineer', 'qa tester', 'test engineer', 'tester', 'automation engineer',
   'pracownik', 'produkcji', 'magazyn', 'kierowca', 'spawacz',
 ];
 
@@ -243,11 +250,14 @@ Return exactly: {"summary":"<one sentence: what the company builds or needs>","t
 
 function buildPass2Prompt(pass1: Pass1Result, userProfile: string): string {
   const tech = pass1.tech_stack.length > 0 ? pass1.tech_stack.join(', ') : 'not specified';
-  return `Score candidate fit for this role. Output ONLY valid JSON, no markdown.
+  return `Score candidate fit. Output ONLY valid JSON, no markdown.
 
 Role: ${pass1.summary}
 Technologies required: ${tech}
 Candidate skills: ${userProfile}
+
+Scoring guide: 90-100=almost every required technology matches; 70-89=most match; 50-69=partial match; 30-49=few match; 0-29=almost nothing matches.
+Be strict. Only score high if required technologies explicitly match candidate skills.
 
 Return exactly: {"match_score":<integer 0-100>}`;
 }
