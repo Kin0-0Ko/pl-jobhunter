@@ -16,6 +16,26 @@ export interface OllamaScoreResult {
   why_good: string;
 }
 
+const PROFILE_KEYWORDS = [
+  'typescript', 'javascript', 'node.js', 'nodejs', 'nestjs', 'nest',
+  'express', 'react', 'next.js', 'nextjs', 'redux',
+  'postgresql', 'postgres', 'mongodb', 'mongo', 'redis',
+  'rabbitmq', 'typeorm', 'aws', 'docker',
+  'github actions', 'ci/cd', 'cicd',
+  'fullstack', 'full-stack', 'full stack',
+  'backend', 'frontend', 'devops',
+  'software engineer', 'software developer', 'web developer', 'developer',
+];
+
+export function isRelevantJob(job: Job): boolean {
+  if (PROFILE_KEYWORDS.length === 0) {
+    logger.warn('isRelevantJob: keyword list empty, passing all jobs');
+    return true;
+  }
+  const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
+  return PROFILE_KEYWORDS.some(kw => haystack.includes(kw));
+}
+
 async function getProfileFromDb(): Promise<string | null> {
   try {
     const pool = await getPool();
@@ -45,19 +65,29 @@ async function getProfileFromDb(): Promise<string | null> {
 }
 
 function buildPrompt(job: Job, userProfile: string): string {
-  return `You are a job-match scorer. Given a user profile and a job posting, return a JSON object with these exact fields:
+  const descSection = job.description
+    ? `\n\nJob description:\n${job.description.slice(0, 1500)}`
+    : '';
+
+  return `You are a strict job-match scorer. Score based ONLY on actual skill overlap between the user profile and the job.
+
+Scoring rules:
+- match_score: integer 0-100 (0 = zero overlap, 100 = perfect match)
+- Score below 30 if core skills do not match
+- If the job title suggests a non-developer role (production worker, CNC operator, auditor, product manager, accountant, analyst without tech context), return match_score: 0
+- Do NOT invent technologies not mentioned in the job title or description
+
+Return a JSON object with these exact fields:
 - match_score: integer 0-100
-- summary: one sentence describing the role
-- tech_stack: array of technology strings mentioned
-- why_good: one sentence on why this matches the user
+- summary: one sentence describing the actual role
+- tech_stack: array of technology strings explicitly mentioned in the job (empty array if none)
+- why_good: one sentence on actual skill overlap, or explain the mismatch if score is below 50
 
 User profile: ${userProfile}
 
-Job: ${job.title} at ${job.company}
-URL: ${job.url}
-Source: ${job.source}
+Job: ${job.title} at ${job.company}${descSection}
 
-Respond ONLY with valid JSON, no markdown.`;
+Respond ONLY with valid JSON. No markdown, no <think> tags, no explanation outside the JSON.`;
 }
 
 async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
@@ -67,7 +97,7 @@ async function callOllama(prompt: string): Promise<OllamaScoreResult | null> {
   const res = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: 200 } }),
+    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: 400 } }),
   });
 
   if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
