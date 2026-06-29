@@ -47,6 +47,7 @@ const PROFILE_KEYWORDS = [
   'rabbitmq', 'graphql', 'rest api', 'restful',
   'docker', 'github actions',
   'fullstack', 'full-stack', 'full stack',
+  'software engineer', 'software developer',
   'web developer', 'web engineer', 'frontend developer', 'frontend engineer',
   'backend developer', 'backend engineer',
   'node developer', 'node engineer', 'js developer', 'ts developer',
