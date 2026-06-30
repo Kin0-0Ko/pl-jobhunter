@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import pino from 'pino';
 import oracledb from 'oracledb';
 import { getPool } from '../config/database.js';
-import { fetchJustJoin } from '../scrapers/justjoin.js';
+import { fetchJustJoin, fetchJustJoinDetail } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
@@ -220,7 +220,7 @@ export async function runEtl(): Promise<void> {
       const chunkIndex = Math.floor(chunkStart / chunkSize) + 1;
       logger.info({ etl_run_id, chunk: chunkIndex, chunkSize: chunk.length, processed: chunkStart, total }, '[ETL] Processing chunk');
 
-      for (const job of chunk) {
+      for (let job of chunk) {
         try {
           // Step 1: persist all scraped jobs to raw_jobs staging table
           try {
@@ -240,6 +240,16 @@ export async function runEtl(): Promise<void> {
           }
           if (relevance.reason === 'wildcard') {
             logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
+          }
+
+          // Step 2b: enrich JustJoin jobs with full description from v1 detail API
+          if (job.source === 'justjoin' && (!job.description || job.description.startsWith('[category:'))) {
+            const slug = job.url.replace('https://justjoin.it/offers/', '');
+            const detail = await fetchJustJoinDetail(slug);
+            if (detail) {
+              job = { ...job, description: detail };
+              logger.debug({ etl_run_id, job_id: job.id }, '[ETL] JJ detail fetched');
+            }
           }
 
           // Step 3: promote to jobs table

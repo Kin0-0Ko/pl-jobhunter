@@ -1,6 +1,42 @@
 import type { Job, JobStatus } from '@pl-jobhunter/shared';
 import pino from 'pino';
 
+interface JJDetailResponse {
+  body?: string;
+  requiredSkills?: string[];
+  niceToHaveSkills?: string[];
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export async function fetchJustJoinDetail(slug: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://api.justjoin.it/v1/offers/${slug}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as JJDetailResponse;
+    const html = data.body;
+    if (!html) return null;
+    const text = stripHtml(html);
+    return text.slice(0, 2000) || null;
+  } catch {
+    return null;
+  }
+}
+
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 interface JJEmploymentType {
