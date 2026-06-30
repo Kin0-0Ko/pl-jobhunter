@@ -55,9 +55,10 @@ See `.spec-kit/tasks/02_tasks.md` for full task matrix. Current state: all tasks
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/009-etl-audit-telegram-boost/plan.md`.
+at `specs/010-etl-correctness-fixes/plan.md`.
 
 Previous completed plans:
+- `specs/009-etl-audit-telegram-boost/plan.md`
 - `specs/008-filter-edge-case-patches/plan.md`
 - `specs/007-bulletproof-etl-pipeline/plan.md`
 - `specs/006-advanced-matching-llm-hardening/plan.md`

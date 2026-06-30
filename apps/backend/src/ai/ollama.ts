@@ -8,6 +8,10 @@ import { getPool } from '../config/database.js';
 // Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
 const ollamaLimit = pLimit(1);
 
+// Shared description cap: used by both the JustJoin detail fetch and the Pass-1 prompt slice.
+// Keeping them in sync prevents the scored text from being shorter than the fetched text.
+export const SCORING_DESC_MAX_CHARS = Number(process.env.SCORING_DESC_MAX_CHARS ?? 2000);
+
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 export interface OllamaScoreResult {
@@ -63,27 +67,33 @@ const CROSS_TRAINING_PHRASES = [
 
 const EXPERIENCE_RE = /(\d+)\+?\s*(?:years?|lata?|lat)\s*(?:of\s+)?(?:experience|doświadczenia)?/gi;
 
-// Jobs matching these title keywords are deterministically scored 0 — no Ollama call
-const NEGATIVE_KEYWORDS = [
-  'java ', 'java,', 'java/', '(java)', ' java)',  // java but not javascript
-  '.net', 'dotnet', 'c# ', 'c#,', 'c#/',
-  'python', 'django', 'flask',
-  'php', 'laravel', 'symfony',
-  'ruby', 'rails',
-  'scala', 'kotlin', 'golang', ' go ',
-  'rust developer', 'rust engineer',
-  'ios developer', 'ios engineer', 'swift developer',
-  'android developer', 'android engineer',
-  'react native',  // mobile, not web
-  'flutter', 'xamarin',
-  'data engineer', 'data scientist', 'ml engineer', 'machine learning', 'data analyst',
-  'embedded', 'firmware', 'fpga',
-  'sap ', 'salesforce', 'dynamics', 'servicenow', 'powerbi', 'power bi', 'tableau',
-  'devops engineer', 'devops specialist', 'platform engineer', 'site reliability', 'sre ',
-  'cloud engineer', 'infrastructure engineer',
-  'postgresql expert', 'database administrator', 'dba ',
-  'qa engineer', 'qa tester', 'test engineer', 'tester', 'automation engineer',
-  'pracownik', 'produkcji', 'magazyn', 'kierowca', 'spawacz',
+// H2: negative keywords matched via word-boundary regex on title only to avoid false positives
+// (e.g. ' go ' in "let's go build", 'sap ' in "we sap resources").
+// Each entry is a regex fragment; patterns are compiled once at module load.
+const NEGATIVE_PATTERNS: RegExp[] = [
+  /\bjava\b(?!script)/i,         // java but not javascript
+  /\.net\b/i, /\bdotnet\b/i, /\bc#\b/i,
+  /\bpython\b/i, /\bdjango\b/i, /\bflask\b/i,
+  /\bphp\b/i, /\blaravel\b/i, /\bsymfony\b/i,
+  /\bruby\b/i, /\brails\b/i,
+  /\bscala\b/i, /\bkotlin\b/i, /\bgolang\b/i, /\bgo\s+developer\b/i, /\bgo\s+engineer\b/i,
+  /\brust\s+developer\b/i, /\brust\s+engineer\b/i,
+  /\bios\s+developer\b/i, /\bios\s+engineer\b/i, /\bswift\s+developer\b/i,
+  /\bandroid\s+developer\b/i, /\bandroid\s+engineer\b/i,
+  /\breact\s+native\b/i,
+  /\bflutter\b/i, /\bxamarin\b/i,
+  /\bdata\s+engineer\b/i, /\bdata\s+scientist\b/i, /\bml\s+engineer\b/i,
+  /\bmachine\s+learning\b/i, /\bdata\s+analyst\b/i,
+  /\bembedded\b/i, /\bfirmware\b/i, /\bfpga\b/i,
+  /\bsap\s+\w/i, /\bsalesforce\b/i, /\bdynamics\b/i, /\bservicenow\b/i,
+  /\bpowerbi\b/i, /\bpower\s+bi\b/i, /\btableau\b/i,
+  /\bdevops\s+engineer\b/i, /\bdevops\s+specialist\b/i,
+  /\bplatform\s+engineer\b/i, /\bsite\s+reliability\b/i, /\bsre\b/i,
+  /\bcloud\s+engineer\b/i, /\binfrastructure\s+engineer\b/i,
+  /\bpostgresql\s+expert\b/i, /\bdatabase\s+administrator\b/i, /\bdba\b/i,
+  /\bqa\s+engineer\b/i, /\bqa\s+tester\b/i, /\btest\s+engineer\b/i,
+  /\btester\b/i, /\bautomation\s+engineer\b/i,
+  /\bpracownik\b/i, /\bprodukcji\b/i, /\bmagazyn\b/i, /\bkierowca\b/i, /\bspawacz\b/i,
 ];
 
 export function isRelevantJob(
@@ -133,9 +143,10 @@ export function isRelevantJob(
   return { pass: true };
 }
 
+// H2: match against title only to avoid incidental substring false-positives in description
 export function isNegativeJob(job: Job): boolean {
-  const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
-  return NEGATIVE_KEYWORDS.some(kw => haystack.includes(kw));
+  const title = job.title;
+  return NEGATIVE_PATTERNS.some(re => re.test(title));
 }
 
 export interface FilterProfile {
@@ -198,7 +209,7 @@ export async function getFilterProfile(): Promise<FilterProfile> {
   }
 }
 
-async function getProfileFromDb(): Promise<string | null> {
+export async function getProfileFromDb(): Promise<string | null> {
   try {
     const pool = await getPool();
     const conn = await pool.getConnection();
@@ -238,8 +249,9 @@ interface Pass1Result {
   tech_stack: string[];
 }
 
-function buildPass1Prompt(job: Job): string {
-  const desc = job.description ? job.description.slice(0, 800) : '';
+export function buildPass1Prompt(job: Job): string {
+  // H4: use shared cap so scored text matches what was fetched
+  const desc = job.description ? job.description.slice(0, SCORING_DESC_MAX_CHARS) : '';
   const descSection = desc ? `\n\nPosting:\n${desc}` : '';
   return `Extract metadata from this job posting. Output ONLY valid JSON, no markdown.
 
@@ -266,16 +278,26 @@ Return exactly: {"match_score":<integer 0-100>}`;
 async function callOllamaRaw(prompt: string, numPredict: number): Promise<string> {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
   const model = process.env.OLLAMA_MODEL ?? 'qwen2.5:0.5b';
+  // M4: bound each call so a hung model can't stall the whole ETL run
+  const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 60000);
 
-  const res = await fetch(`${baseUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict } }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
-  const data = (await res.json()) as { response: string };
-  return data.response;
+  try {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict } }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+    const data = (await res.json()) as { response: string };
+    return data.response;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callPass1(job: Job): Promise<Pass1Result | null> {
@@ -339,13 +361,18 @@ async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string)
   return normalizeScore(score);
 }
 
-export async function scoreJob(job: Job): Promise<OllamaScoreResult> {
-  const dbProfile = await getProfileFromDb();
-  const userProfile =
-    dbProfile ??
-    (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
-
-  logger.debug({ source: dbProfile ? 'db' : 'env' }, 'ollama profile source');
+// M2: accept pre-resolved profile from runEtl to avoid one DB read per job.
+// When profile is omitted (e.g. tests, direct callers), falls back to DB/env as before.
+export async function scoreJob(job: Job, profile?: string): Promise<OllamaScoreResult> {
+  let userProfile: string;
+  if (profile !== undefined) {
+    userProfile = profile;
+    logger.debug({ source: 'caller' }, 'ollama profile source');
+  } else {
+    const dbProfile = await getProfileFromDb();
+    userProfile = dbProfile ?? (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
+    logger.debug({ source: dbProfile ? 'db' : 'env' }, 'ollama profile source');
+  }
 
   const pass1 = await callPass1(job);
   if (!pass1) {

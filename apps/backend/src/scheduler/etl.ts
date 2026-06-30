@@ -7,7 +7,7 @@ import { fetchJustJoin, fetchJustJoinDetail } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
-import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile } from '../ai/ollama.js';
+import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile, getProfileFromDb, SCORING_DESC_MAX_CHARS } from '../ai/ollama.js';
 import { sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
 import * as etlState from './etl-state.js';
 import type { TopJobEntry } from './etl-state.js';
@@ -71,6 +71,10 @@ async function mergeRawJob(job: Job): Promise<void> {
   }
 }
 
+// C3/H1: WHEN MATCHED UPDATE persists enriched descriptions and changed salary.
+// Guards: description only replaced when incoming is non-null AND stored is null/stub.
+// Salary: NVL semantics — never clobber a known value with null.
+// status/created_at/id/title/company/url/source/currency are insert-only.
 async function mergeJob(job: Job): Promise<boolean> {
   const pool = await getPool();
   const conn = await pool.getConnection();
@@ -89,7 +93,18 @@ async function mergeJob(job: Job): Promise<boolean> {
          :salary_b2b_min, :salary_b2b_max,
          :salary_uop_min, :salary_uop_max,
          :currency, :status, :created_at
-       )`,
+       )
+       WHEN MATCHED THEN UPDATE SET
+         description = CASE
+           WHEN :description IS NOT NULL AND (
+             dst.description IS NULL OR dst.description LIKE '[category:%'
+           ) THEN :description
+           ELSE NVL(:description, dst.description)
+         END,
+         salary_b2b_min = NVL(:salary_b2b_min, dst.salary_b2b_min),
+         salary_b2b_max = NVL(:salary_b2b_max, dst.salary_b2b_max),
+         salary_uop_min = NVL(:salary_uop_min, dst.salary_uop_min),
+         salary_uop_max = NVL(:salary_uop_max, dst.salary_uop_max)`,
       {
         id: job.id,
         title: job.title,
@@ -160,7 +175,6 @@ async function checkAnalysisExists(jobId: string): Promise<boolean> {
     );
     const row = result.rows?.[0];
     if (!row || (row[0] as number) === 0) return false;
-    // Re-score if tech_stack is empty array or null (scored before detail-fetch fix)
     const techStack = row[1];
     if (!techStack) return false;
     try {
@@ -185,12 +199,19 @@ export async function runEtl(): Promise<void> {
   const etl_run_id = randomUUID();
   logger.info({ etl_run_id }, '[ETL] Starting run');
 
-  // Reset accumulator for this run
   const runInsertedJobs: Array<{ job: Job; score: number; stack: string[] }> = [];
 
   try {
-    const jobs: Job[] = [];
+    // M2: Read profile once per run and thread into scoreJob
+    const filterProfile = await getFilterProfile();
+    const hasPrefs = Object.keys(filterProfile).length > 0;
+    if (hasPrefs) {
+      logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile resolved');
+    } else {
+      logger.info({ etl_run_id }, '[ETL] Filter profile: no preferences configured');
+    }
 
+    // M1: Fetch all sources concurrently — one failure doesn't block others
     const scrapers: Array<{ name: string; fn: () => Promise<Job[]> }> = [
       { name: 'justjoin', fn: fetchJustJoin },
       { name: 'nofluff', fn: fetchNoFluff },
@@ -198,14 +219,17 @@ export async function runEtl(): Promise<void> {
       { name: 'rocketjobs', fn: fetchRocketJobs },
     ];
 
+    const scraperResults = await Promise.allSettled(scrapers.map(s => s.fn()));
+    const jobs: Job[] = [];
     const counts: Record<string, number> = {};
-    for (const { name, fn } of scrapers) {
-      try {
-        const results = await fn();
-        counts[name] = results.length;
-        jobs.push(...results);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+    for (let i = 0; i < scrapers.length; i++) {
+      const name = scrapers[i]!.name;
+      const result = scraperResults[i]!;
+      if (result.status === 'fulfilled') {
+        counts[name] = result.value.length;
+        jobs.push(...result.value);
+      } else {
+        const error = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
         logger.warn({ etl_run_id, scraper: name, err: error.message }, '[ETL] Scraper failed — continuing');
         counts[name] = 0;
       }
@@ -213,21 +237,20 @@ export async function runEtl(): Promise<void> {
 
     logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
-    const filterProfile = await getFilterProfile();
-    const hasPrefs = Object.keys(filterProfile).length > 0;
-    if (hasPrefs) {
-      logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile resolved');
-    } else {
-      logger.info({ etl_run_id }, '[ETL] Filter profile: no preferences configured — all seniority/experience filters inactive');
-    }
-
     let inserted = 0;
     let scored = 0;
     let filtered = 0;
     let fallback = 0;
     const threshold = Number(process.env.ALERT_SCORE_THRESHOLD ?? 80);
     const chunkSize = Math.max(1, Number(process.env.ETL_CHUNK_SIZE ?? 50));
+    // C1: consecutive DB failure counter — reset on success, abort on threshold exceeded
+    const dbFailureAbortThreshold = Number(process.env.ETL_DB_FAILURE_ABORT_THRESHOLD ?? 10);
+    let consecutiveDbFailures = 0;
     const total = jobs.length;
+
+    // M2: resolve scoring profile string once for the whole run (not per-job)
+    const dbProfile = await getProfileFromDb();
+    const runProfile = dbProfile ?? (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
 
     for (let chunkStart = 0; chunkStart < total; chunkStart += chunkSize) {
       const chunk = jobs.slice(chunkStart, chunkStart + chunkSize);
@@ -256,34 +279,45 @@ export async function runEtl(): Promise<void> {
             logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
           }
 
+          // C2: dedup check BEFORE detail fetch — skip already-complete jobs entirely.
+          // Description updates (C3) only matter when we re-score; if analysis is valid, skip.
+          const existingValidAnalysis = await checkAnalysisExists(job.id).catch(() => false);
+          if (existingValidAnalysis) {
+            logger.debug({ etl_run_id, job_id: job.id }, '[ETL] Already stored with valid analysis — skipping');
+            continue;
+          }
+
           // Step 2b: enrich JustJoin jobs with full description from v1 detail API
+          // Only reached when job is new OR missing valid analysis (C2 gate above)
           if (job.source === 'justjoin' && (!job.description || job.description.startsWith('[category:'))) {
             const slug = job.url.replace('https://justjoin.it/offers/', '');
             const detail = await fetchJustJoinDetail(slug);
             if (detail) {
-              job = { ...job, description: detail };
+              job = { ...job, description: detail.slice(0, SCORING_DESC_MAX_CHARS) };
               logger.debug({ etl_run_id, job_id: job.id }, '[ETL] JJ detail fetched');
             }
           }
 
-          // Step 3: promote to jobs table
+          // Step 3: promote to jobs table (C3/H1: MERGE now also updates description+salary on match)
           let wasInserted: boolean;
           try {
             wasInserted = await mergeJob(job);
+            consecutiveDbFailures = 0; // reset on success
           } catch (err) {
             const error = err instanceof Error ? err : new Error(String(err));
-            logger.error({ etl_run_id, job_id: job.id, err: error.message }, '[ETL] DB error — aborting');
-            await sendCriticalAlert('oracle', error);
-            process.exitCode = 1;
-            return;
+            consecutiveDbFailures++;
+            logger.warn({ etl_run_id, job_id: job.id, err: error.message, consecutiveDbFailures }, '[ETL] DB write failed — skipping job');
+            // C1: only abort on sustained failure, not a single blip
+            if (consecutiveDbFailures > dbFailureAbortThreshold) {
+              logger.error({ etl_run_id, consecutiveDbFailures }, '[ETL] DB failure threshold exceeded — aborting run');
+              await sendCriticalAlert('oracle', error);
+              return;
+            }
+            continue;
           }
 
-          if (wasInserted) {
-            inserted++;
-          } else {
-            // Job already exists — skip if it already has a valid analysis row
-            const hasAnalysis = await checkAnalysisExists(job.id);
-            if (hasAnalysis) continue;
+          if (!wasInserted) {
+            // Job already existed and is missing valid analysis — re-score it
             logger.info({ etl_run_id, job_id: job.id }, '[ETL] Existing job missing analysis — re-scoring');
           }
 
@@ -299,8 +333,8 @@ export async function runEtl(): Promise<void> {
             continue;
           }
 
-          // Step 5: score via Ollama — scoreJob always returns a record (fallback on failure)
-          const analysis = await scoreJob(job);
+          // Step 5: score via Ollama — M2: pass pre-resolved profile
+          const analysis = await scoreJob(job, runProfile);
           const isFallback = analysis.match_score === -1;
 
           if (isFallback) {
@@ -320,7 +354,6 @@ export async function runEtl(): Promise<void> {
             logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
           }
         } catch (jobErr) {
-          // Per-item isolation: one job's unexpected error must not abort the chunk
           logger.warn({ etl_run_id, job_id: job.id, err: String(jobErr) }, '[ETL] Unexpected per-job error — continuing');
         }
       }
@@ -346,7 +379,6 @@ export async function runEtl(): Promise<void> {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error({ etl_run_id, err: error.message }, '[ETL] Unexpected error');
     await sendCriticalAlert('etl-orchestrator', error);
-    process.exitCode = 1;
   } finally {
     etlState.setRunning(false);
   }

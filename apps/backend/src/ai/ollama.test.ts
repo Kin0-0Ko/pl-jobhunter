@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { scoreJob, isFirstPersonInverted, normalizeScore, buildFallbackRecord, isRelevantJob, getFilterProfile } from './ollama.js';
+import { scoreJob, isFirstPersonInverted, normalizeScore, buildFallbackRecord, isRelevantJob, getFilterProfile, isNegativeJob, SCORING_DESC_MAX_CHARS, buildPass1Prompt } from './ollama.js';
 import type { Job } from '@pl-jobhunter/shared';
 
 const server = setupServer();
@@ -261,5 +261,120 @@ describe('getFilterProfile() (T006)', () => {
     const result = await gfp();
     expect(result).toEqual({});
     vi.doUnmock('../config/database.js');
+  });
+});
+
+// ─── T015: US4 — H2 isNegativeJob word-boundary (title-scoped) ───────────────
+
+describe('isNegativeJob() — H2: word-boundary title matching', () => {
+  const base: Job = {
+    id: 'test', title: '', company: 'Corp', url: 'https://example.com',
+    source: 'nofluff', description: null,
+    salary_b2b_min: null, salary_b2b_max: null,
+    salary_uop_min: null, salary_uop_max: null,
+    currency: 'PLN', status: 'NEW', created_at: new Date().toISOString(),
+  };
+
+  it('blocks "Senior Go Developer" title (genuine Go role)', () => {
+    expect(isNegativeJob({ ...base, title: 'Senior Go Developer' })).toBe(true);
+  });
+
+  it('does NOT block "TypeScript Engineer" with "let\'s go build" in description', () => {
+    expect(isNegativeJob({ ...base, title: 'TypeScript Engineer', description: "let's go build great things with Node.js" })).toBe(false);
+  });
+
+  it('does NOT block when description says "we sap our resources" with relevant title', () => {
+    expect(isNegativeJob({ ...base, title: 'Node.js Backend Developer', description: 'we sap our legacy systems' })).toBe(false);
+  });
+
+  it('blocks "Java Developer" title', () => {
+    expect(isNegativeJob({ ...base, title: 'Java Developer' })).toBe(true);
+  });
+
+  it('does NOT block "JavaScript Engineer" (java prefix but not java word)', () => {
+    expect(isNegativeJob({ ...base, title: 'JavaScript Engineer' })).toBe(false);
+  });
+
+  it('blocks "QA Engineer" title', () => {
+    expect(isNegativeJob({ ...base, title: 'QA Engineer' })).toBe(true);
+  });
+
+  it('does NOT block "TypeScript/Node.js Developer" with incidental "sap" in description', () => {
+    expect(isNegativeJob({ ...base, title: 'TypeScript/Node.js Developer', description: 'experience with SAP integration is a plus' })).toBe(false);
+  });
+
+  it('blocks "SAP Consultant" title', () => {
+    expect(isNegativeJob({ ...base, title: 'SAP Consultant' })).toBe(true);
+  });
+});
+
+// ─── T017: US5 — H4 Pass-1 prompt uses SCORING_DESC_MAX_CHARS ────────────────
+
+describe('buildPass1Prompt() — H4: uses SCORING_DESC_MAX_CHARS', () => {
+  it('includes description text beyond the old 800-char limit up to SCORING_DESC_MAX_CHARS', () => {
+    const longDesc = 'A'.repeat(900) + 'UNIQUE_TECH_TOKEN' + 'B'.repeat(100);
+    const job: Job = {
+      id: 'test', title: 'TS Dev', company: 'Corp', url: 'https://example.com',
+      source: 'justjoin', description: longDesc,
+      salary_b2b_min: null, salary_b2b_max: null,
+      salary_uop_min: null, salary_uop_max: null,
+      currency: 'PLN', status: 'NEW', created_at: new Date().toISOString(),
+    };
+    const prompt = buildPass1Prompt(job);
+    expect(prompt).toContain('UNIQUE_TECH_TOKEN');
+  });
+
+  it('SCORING_DESC_MAX_CHARS is at least 900 (old 800 cap is superseded)', () => {
+    expect(SCORING_DESC_MAX_CHARS).toBeGreaterThanOrEqual(900);
+  });
+});
+
+// ─── T020: US6 — M4 AbortController timeout ──────────────────────────────────
+
+describe('scoreJob() — M4: AbortController timeout', () => {
+  it('rejects within OLLAMA_TIMEOUT_MS when model never responds', async () => {
+    vi.stubEnv('OLLAMA_TIMEOUT_MS', '200');
+
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', async () => {
+        // Never respond — simulate hung model
+        await new Promise(() => {});
+        return HttpResponse.json({ response: '{}' });
+      }),
+    );
+
+    const start = Date.now();
+    const result = await scoreJob(mockJob);
+    const elapsed = Date.now() - start;
+
+    // Call aborted → fallback path → match_score -1
+    expect(result.match_score).toBe(-1);
+    // Should resolve well within 2s (configured 200ms + retry + some slack)
+    expect(elapsed).toBeLessThan(2000);
+
+    vi.unstubAllEnvs();
+  });
+});
+
+// ─── T021: US6 — M2 scoreJob with explicit profile skips DB read ─────────────
+
+describe('scoreJob() — M2: explicit profile skips DB read', () => {
+  it('uses provided profile and does not call getProfileFromDb', async () => {
+    const pass1Response = { summary: 'Company builds TypeScript microservices.', tech_stack: ['TypeScript'] };
+    const pass2Response = { match_score: 88 };
+    let callCount = 0;
+
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
+        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
+      }),
+    );
+
+    // Pass explicit profile — DB should not be hit
+    const result = await scoreJob(mockJob, 'TypeScript/Node.js developer, B2B');
+    expect(result.match_score).toBe(88);
+    // If getProfileFromDb were called it would fail (no DB in test) — passing here proves it wasn't
   });
 });
