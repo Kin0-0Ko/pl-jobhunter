@@ -14,6 +14,10 @@ function formatSalary(min: number | null, max: number | null, currency: string):
   return `${parts.join('–')} ${currency}`;
 }
 
+function isHourlySalary(min: number | null, currency: string): boolean {
+  return min !== null && min < 500 && currency === 'PLN';
+}
+
 export function JobCard({ job, onOpen }: Props) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: job.id,
@@ -67,13 +71,42 @@ export function JobCard({ job, onOpen }: Props) {
 
       {(b2b ?? uop) && (
         <div className="text-xs text-gray-500 mb-2">
-          {b2b && <div>B2B: {b2b}</div>}
-          {uop && <div>UoP: {uop}</div>}
+          {b2b && (
+            <div className="flex items-center gap-1">
+              B2B: {b2b}
+              {isHourlySalary(job.salary_b2b_min, job.currency) && (
+                <span className="bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-[10px] font-medium">⚠ hourly?</span>
+              )}
+            </div>
+          )}
+          {uop && (
+            <div className="flex items-center gap-1">
+              UoP: {uop}
+              {isHourlySalary(job.salary_uop_min, job.currency) && (
+                <span className="bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-[10px] font-medium">⚠ hourly?</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {job.summary && (
         <p className="text-xs text-gray-500 mb-2 line-clamp-2">{job.summary}</p>
+      )}
+
+      {job.tech_stack && job.tech_stack.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {job.tech_stack.slice(0, 5).map((tech) => (
+            <span key={tech} className="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded font-medium">
+              {tech}
+            </span>
+          ))}
+          {job.tech_stack.length > 5 && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
+              +{job.tech_stack.length - 5}
+            </span>
+          )}
+        </div>
       )}
 
       <a

@@ -14,7 +14,7 @@ export interface OllamaScoreResult {
   match_score: number;
   summary: string;
   tech_stack: string[];
-  why_good: string;
+  why_good: string | null;
 }
 
 const FIRST_PERSON_RE =
@@ -35,7 +35,7 @@ export function buildFallbackRecord(): OllamaScoreResult {
     match_score: -1,
     summary: 'Analysis unavailable — pending manual review',
     tech_stack: [],
-    why_good: ' ',
+    why_good: null,
   };
 }
 
@@ -330,7 +330,7 @@ async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string)
 
   const result = repairAndParseLoose(raw);
   if (!result.ok) {
-    logger.warn({ reason: result.reason, job_id: jobId }, '[ETL] pass2: JSON repair failed');
+    logger.warn({ reason: result.reason, raw, job_id: jobId }, '[ETL] pass2: JSON repair failed');
     return -1;
   }
 
@@ -353,14 +353,27 @@ export async function scoreJob(job: Job): Promise<OllamaScoreResult> {
     return buildFallbackRecord();
   }
 
+  // Quality guard: reject prompt-echo and too-short summaries
+  const summaryOk = !pass1.summary.includes('<') && pass1.summary.trim().length >= 20;
+  if (!summaryOk) {
+    logger.warn({ job_id: job.id, summary: pass1.summary }, '[ETL] pass1: bad summary — using job.title fallback');
+    pass1.summary = job.title;
+  }
+
+  // Normalise tech_stack: handle comma-string from model instead of array
+  if (pass1.tech_stack.length === 1 && (pass1.tech_stack[0] ?? '').includes(',')) {
+    pass1.tech_stack = (pass1.tech_stack[0] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
   logger.debug({ job_id: job.id, summary: pass1.summary, tech_stack: pass1.tech_stack }, '[ETL] pass1 complete');
 
   const matchScore = await callPass2(pass1, userProfile, job.id);
+  const finalScore = summaryOk ? matchScore : 10;
 
   return {
-    match_score: matchScore,
+    match_score: finalScore,
     summary: pass1.summary,
     tech_stack: pass1.tech_stack,
-    why_good: ' ',
+    why_good: null,
   };
 }

@@ -10,7 +10,8 @@ import { jobsRoutes } from './routes/jobs.js';
 import { profileRoutes } from './routes/profile.js';
 import { etlRoutes } from './routes/etl.js';
 import { runEtl } from './scheduler/etl.js';
-import { startBot } from './bot/telegram.js';
+import * as etlState from './scheduler/etl-state.js';
+import { startBot, sendRunDigest } from './bot/telegram.js';
 
 const server = Fastify({
   logger: {
@@ -51,7 +52,7 @@ await server.register(profileRoutes);
 await server.register(etlRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
-const host = process.env.HOST ?? '0.0.0.0';
+const host = process.env.HOST ?? '127.0.0.1';
 
 if (process.argv.includes('--run-once')) {
   await runEtl();
@@ -63,7 +64,11 @@ try {
   await server.listen({ port, host });
   startBot().catch((err) => server.log.error({ err }, 'telegram bot failed to start'));
   cron.schedule('0 */3 * * *', () => {
-    runEtl().catch((err) => server.log.error('[ETL] cron error:', err));
+    runEtl()
+      .then(async () => {
+        if (etlState.lastRunSummary) await sendRunDigest(etlState.lastRunSummary).catch(() => undefined);
+      })
+      .catch((err) => server.log.error('[ETL] cron error:', err));
   });
   server.log.info('[ETL] Cron scheduled: every 3 hours');
 } catch (err) {

@@ -18,6 +18,10 @@ function hasAnalysis(job: ModalJob): job is JobWithAnalysis {
   return 'match_score' in job;
 }
 
+function isHourlySalary(min: number | null, currency: string): boolean {
+  return min !== null && min < 500 && currency === 'PLN';
+}
+
 export function JobDetailModal({ job, onClose }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -71,9 +75,20 @@ export function JobDetailModal({ job, onClose }: Props) {
             }`}>
               {job.source}
             </span>
-            {(b2b ?? uop) && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">
-                {b2b ? `B2B: ${b2b}` : ''}{b2b && uop ? ' · ' : ''}{uop ? `UoP: ${uop}` : ''}
+            {b2b && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 flex items-center gap-1">
+                B2B: {b2b}
+                {isHourlySalary(job.salary_b2b_min, job.currency) && (
+                  <span className="bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-[10px] font-medium">⚠ hourly?</span>
+                )}
+              </span>
+            )}
+            {uop && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 flex items-center gap-1">
+                UoP: {uop}
+                {isHourlySalary(job.salary_uop_min, job.currency) && (
+                  <span className="bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-[10px] font-medium">⚠ hourly?</span>
+                )}
               </span>
             )}
           </div>

@@ -47,7 +47,7 @@ describe('scoreJob() — two-pass', () => {
     expect(result.match_score).toBe(85);
     expect(result.summary).toBe(pass1Response.summary);
     expect(result.tech_stack).toContain('TypeScript');
-    expect(typeof result.why_good).toBe('string');
+    expect(result.why_good).toBeNull();
     expect(callCount).toBe(2);
   });
 
@@ -178,7 +178,7 @@ describe('normalizeScore() (T010)', () => {
 describe('buildFallbackRecord() (T010)', () => {
   it('has match_score -1', () => expect(buildFallbackRecord().match_score).toBe(-1));
   it('has non-empty summary', () => expect(buildFallbackRecord().summary.trim()).not.toBe(''));
-  it('has non-empty why_good', () => expect(buildFallbackRecord().why_good.length).toBeGreaterThan(0));
+  it('has null why_good', () => expect(buildFallbackRecord().why_good).toBeNull());
   it('has empty tech_stack array', () => expect(buildFallbackRecord().tech_stack).toEqual([]));
 });
 

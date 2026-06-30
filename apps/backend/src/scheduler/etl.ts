@@ -8,8 +8,26 @@ import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
 import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile } from '../ai/ollama.js';
-import { sendJobAlert, sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
+import { sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
+import * as etlState from './etl-state.js';
+import type { TopJobEntry } from './etl-state.js';
+export type { ETLRunSummary, TopJobEntry } from './etl-state.js';
 import type { Job } from '@pl-jobhunter/shared';
+
+function formatSalaryShort(
+  b2bMin: number | null, b2bMax: number | null,
+  uopMin: number | null, uopMax: number | null,
+  currency: string,
+): string | null {
+  const fmt = (min: number | null, max: number | null, label: string): string | null => {
+    if (min == null && max == null) return null;
+    const lo = min != null ? `${Math.round(min / 1000)}k` : null;
+    const hi = max != null ? `${Math.round(max / 1000)}k` : null;
+    const range = [lo, hi].filter(Boolean).join('–');
+    return `${range} ${currency} (${label})`;
+  };
+  return fmt(b2bMin, b2bMax, 'B2B') ?? fmt(uopMin, uopMax, 'UoP');
+}
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -100,7 +118,7 @@ async function persistAnalysis(
   score: number,
   summary: string,
   techStack: string[],
-  whyGood: string,
+  whyGood: string | null,
 ): Promise<void> {
   const pool = await getPool();
   const conn = await pool.getConnection();
@@ -144,8 +162,17 @@ async function checkAnalysisExists(jobId: string): Promise<boolean> {
 }
 
 export async function runEtl(): Promise<void> {
+  if (etlState.isRunning) {
+    logger.warn('[ETL] Already running — skipping duplicate trigger');
+    return;
+  }
+  etlState.setRunning(true);
+
   const etl_run_id = randomUUID();
   logger.info({ etl_run_id }, '[ETL] Starting run');
+
+  // Reset accumulator for this run
+  const runInsertedJobs: Array<{ job: Job; score: number; stack: string[] }> = [];
 
   try {
     const jobs: Job[] = [];
@@ -240,7 +267,7 @@ export async function runEtl(): Promise<void> {
           if (isNegativeJob(job)) {
             logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
             try {
-              await persistAnalysis(job.id, 0, job.title, [], ' ');
+              await persistAnalysis(job.id, 0, job.title, [], null);
               scored++;
             } catch (err) {
               logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
@@ -262,8 +289,8 @@ export async function runEtl(): Promise<void> {
             scored++;
             logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: isFallback }, '[ETL] Scored job');
 
-            if (!isFallback && analysis.match_score >= threshold) {
-              await sendJobAlert(job, analysis.match_score);
+            if (!isFallback && wasInserted) {
+              runInsertedJobs.push({ job, score: analysis.match_score, stack: analysis.tech_stack });
             }
           } catch (err) {
             logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
@@ -275,12 +302,27 @@ export async function runEtl(): Promise<void> {
       }
     }
 
+    const topJobs: TopJobEntry[] = runInsertedJobs
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map(({ job, score, stack }) => ({
+        title: job.title,
+        company: job.company,
+        salaryDisplay: formatSalaryShort(job.salary_b2b_min, job.salary_b2b_max, job.salary_uop_min, job.salary_uop_max, job.currency),
+        score,
+        stack,
+      }));
+
+    etlState.setLastRunSummary({ completedAt: new Date(), rawTotal: total, filtered, inserted, scored, fallback, topJobs });
+
     logger.info({ etl_run_id, rawTotal: total, filtered, inserted, scored, fallback }, '[ETL] Run complete');
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error({ etl_run_id, err: error.message }, '[ETL] Unexpected error');
     await sendCriticalAlert('etl-orchestrator', error);
     process.exitCode = 1;
+  } finally {
+    etlState.setRunning(false);
   }
 }
 

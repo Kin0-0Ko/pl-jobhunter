@@ -26,7 +26,7 @@ async function importFresh() {
 }
 
 describe('sendCriticalAlert', () => {
-  it('sends correct CRITICAL message format', async () => {
+  it('sends correct HTML alert format', async () => {
     stubEnv();
     let capturedBody: Record<string, unknown> | null = null;
 
@@ -42,7 +42,7 @@ describe('sendCriticalAlert', () => {
 
     expect(capturedBody).not.toBeNull();
     expect(capturedBody!['chat_id']).toBe(CHAT_ID);
-    expect(String(capturedBody!['text'])).toContain('🚨 CRITICAL');
+    expect(String(capturedBody!['text'])).toContain('ETL Run Failed');
     expect(String(capturedBody!['text'])).toContain('justjoin');
     expect(String(capturedBody!['text'])).toContain('HTTP 500');
   });
@@ -72,8 +72,8 @@ describe('sendCriticalAlert', () => {
   });
 });
 
-describe('sendJobAlert', () => {
-  it('sends job alert with score >= threshold (regression)', async () => {
+describe('sendRunDigest', () => {
+  it('sends HTML digest with run stats and top jobs', async () => {
     stubEnv();
     let capturedBody: Record<string, unknown> | null = null;
 
@@ -84,18 +84,50 @@ describe('sendJobAlert', () => {
       }),
     );
 
-    const { sendJobAlert } = await importFresh();
-    const job = {
-      id: 'jj-1', title: 'TS Dev', company: 'Acme', url: 'https://example.com',
-      source: 'justjoin' as const, salary_b2b_min: 18000, salary_b2b_max: 24000,
-      salary_uop_min: null, salary_uop_max: null, currency: 'PLN',
-      status: 'NEW' as const, created_at: new Date().toISOString(),
-    };
-    await sendJobAlert(job, 90);
+    const { sendRunDigest } = await importFresh();
+    await sendRunDigest({
+      completedAt: new Date('2026-06-30T14:00:00Z'),
+      rawTotal: 1532,
+      filtered: 1452,
+      inserted: 48,
+      scored: 48,
+      fallback: 0,
+      topJobs: [{ title: 'TS Dev', company: 'Acme', salaryDisplay: '18k–24k PLN (B2B)', score: 95, stack: ['TypeScript', 'Node.js'] }],
+    });
 
     expect(capturedBody).not.toBeNull();
-    expect(String(capturedBody!['text'])).toContain('🎯');
-    expect(String(capturedBody!['text'])).toContain('TS Dev');
-    expect(String(capturedBody!['text'])).toContain('90/100');
+    expect(capturedBody!['parse_mode']).toBe('HTML');
+    const text = String(capturedBody!['text']);
+    expect(text).toContain('ETL Run Complete');
+    expect(text).toContain('Fetched: 1532');
+    expect(text).toContain('TS Dev');
+    expect(text).toContain('18k–24k PLN (B2B)');
+    expect(text).toContain('TypeScript');
   });
+
+  it('sends "no new jobs" when inserted = 0', async () => {
+    stubEnv();
+    let capturedBody: Record<string, unknown> | null = null;
+
+    server.use(
+      http.post(`${TELEGRAM_API}/bot${BOT_TOKEN}/sendMessage`, async ({ request }) => {
+        capturedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ok: true, result: { message_id: 3 } });
+      }),
+    );
+
+    const { sendRunDigest } = await importFresh();
+    await sendRunDigest({
+      completedAt: new Date('2026-06-30T14:00:00Z'),
+      rawTotal: 200,
+      filtered: 190,
+      inserted: 0,
+      scored: 0,
+      fallback: 0,
+      topJobs: [],
+    });
+
+    expect(String(capturedBody!['text'])).toContain('No new jobs this run');
+  });
+
 });

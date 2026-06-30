@@ -1,8 +1,8 @@
-import { spawn } from 'child_process';
 import { Telegraf } from 'telegraf';
-import type { Job } from '@pl-jobhunter/shared';
 import pino from 'pino';
 import { getPool } from '../config/database.js';
+import * as etlState from '../scheduler/etl-state.js';
+import type { ETLRunSummary } from '../scheduler/etl-state.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -17,19 +17,43 @@ function getBot(): Telegraf {
   return bot;
 }
 
-export async function sendJobAlert(job: Job, score: number): Promise<void> {
-  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-  if (!chatId) {
-    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping alert');
-    return;
+function formatDigestHtml(summary: ETLRunSummary, header: string): string {
+  const ts = summary.completedAt.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const fallbackLine = summary.fallback > 0 ? ` | ⚠ Fallback: ${summary.fallback}` : '';
+  const statsLine = `📥 Fetched: ${summary.rawTotal} | Filtered: ${summary.filtered} | New: ${summary.inserted} | Scored: ${summary.scored}${fallbackLine}`;
+
+  let jobsBlock: string;
+  if (summary.inserted > 0 && summary.topJobs.length > 0) {
+    const jobLines = summary.topJobs.map((j, i) => {
+      const lines = [`${i + 1}. <b>${escHtml(j.title)}</b> @ ${escHtml(j.company)}`];
+      if (j.salaryDisplay) lines.push(`   💰 ${escHtml(j.salaryDisplay)} · ⭐ ${j.score}`);
+      else lines.push(`   ⭐ ${j.score}`);
+      if (j.stack.length > 0) lines.push(`   🛠 ${j.stack.map(escHtml).join(', ')}`);
+      return lines.join('\n');
+    });
+    jobsBlock = `🔥 <b>Top New Jobs</b>\n${jobLines.join('\n\n')}`;
+  } else {
+    jobsBlock = 'ℹ️ No new jobs this run.';
   }
 
-  const msg = `🎯 ${job.title} @ ${job.company}\nScore: ${score}/100\n${job.url}`;
+  return `📊 <b>${escHtml(header)}</b>\n🕐 ${ts}\n${statsLine}\n\n${jobsBlock}`;
+}
 
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export async function sendRunDigest(summary: ETLRunSummary): Promise<void> {
+  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!chatId) {
+    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping run digest');
+    return;
+  }
   try {
-    await getBot().telegram.sendMessage(chatId, msg);
+    await getBot().telegram.sendMessage(chatId, formatDigestHtml(summary, 'ETL Run Complete'), { parse_mode: 'HTML' });
   } catch (err) {
-    logger.error({ err }, 'telegram: failed to send job alert');
+    logger.error({ err }, 'telegram: failed to send run digest');
+    throw err;
   }
 }
 
@@ -39,11 +63,10 @@ export async function sendCriticalAlert(source: string, err: Error): Promise<voi
     logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping critical alert');
     return;
   }
-
-  const msg = `🚨 CRITICAL: ETL Pipeline Failed\nSource: ${source}\nError: ${err.message.slice(0, 200)}\nTime: ${new Date().toISOString()}`;
-
+  const ts = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+  const msg = `🚨 <b>ETL Run Failed</b>\n🕐 ${ts}\nSource: ${escHtml(source)}\nError: ${escHtml(err.message.slice(0, 200))}`;
   try {
-    await getBot().telegram.sendMessage(chatId, msg);
+    await getBot().telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
   } catch (dispatchErr) {
     logger.error({ err: dispatchErr }, 'telegram: failed to send critical alert');
   }
@@ -51,13 +74,8 @@ export async function sendCriticalAlert(source: string, err: Error): Promise<voi
 
 export async function sendOllamaWarning(jobId: string, err: Error): Promise<void> {
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
-  if (!chatId) {
-    logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping Ollama warning');
-    return;
-  }
-
-  const msg = `⚠️ WARNING: Ollama scoring failed\nJob: ${jobId}\nError: ${err.message.slice(0, 200)}\nJob persisted without score`;
-
+  if (!chatId) return;
+  const msg = `⚠️ Ollama scoring failed\nJob: ${jobId}\nError: ${err.message.slice(0, 200)}`;
   try {
     await getBot().telegram.sendMessage(chatId, msg);
   } catch (dispatchErr) {
@@ -75,45 +93,52 @@ export async function startBot(): Promise<void> {
   const b = getBot();
 
   b.command('status', async (ctx) => {
-    let dbStatus = '✅ connected';
-    let ollamaStatus = '✅ reachable';
+    const summary = etlState.lastRunSummary;
+    if (!summary) {
+      await ctx.reply('ℹ️ No ETL run recorded yet.');
+      return;
+    }
 
+    // Also do a quick DB health ping and append to digest
+    let dbOk = true;
     try {
       const pool = await getPool();
       const conn = await pool.getConnection();
       await conn.close();
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      dbStatus = `❌ ${error.message.slice(0, 80)}`;
+    } catch {
+      dbOk = false;
     }
 
-    try {
-      const ollamaBase = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
-      const res = await fetch(`${ollamaBase}/api/tags`, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) ollamaStatus = `❌ HTTP ${res.status}`;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      ollamaStatus = `❌ ${error.message.slice(0, 80)}`;
-    }
-
-    await ctx.reply(
-      `📊 System Status\nDB: ${dbStatus}\nOllama: ${ollamaStatus}\nTime: ${new Date().toISOString()}`,
-    );
+    const digest = formatDigestHtml(summary, 'Last ETL Run');
+    const health = dbOk ? '' : '\n\n⚠️ DB currently unreachable';
+    await ctx.reply(digest + health, { parse_mode: 'HTML' });
   });
 
   b.command('scrape', async (ctx) => {
-    try {
-      const child = spawn('node', ['dist/scheduler/etl.js', '--run-once'], {
-        detached: true,
-        stdio: 'inherit',
-      });
-      child.unref();
-      await ctx.reply('⚡ ETL started in background. Check back in ~5 minutes.');
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      logger.error({ err: error.message }, 'telegram: failed to spawn ETL from /scrape');
-      await ctx.reply('❌ Failed to start ETL. Check server logs.');
+    if (etlState.isRunning) {
+      await ctx.reply('⏳ ETL already running — please wait.');
+      return;
     }
+    await ctx.reply('⚡ ETL triggered ✅');
+    // Lazy import breaks the etl.ts ↔ telegram.ts circular dependency
+    const { runEtl } = await import('../scheduler/etl.js');
+    runEtl()
+      .then(async () => {
+        if (etlState.lastRunSummary) await sendRunDigest(etlState.lastRunSummary).catch(() => undefined);
+      })
+      .catch(async (err: unknown) => {
+        const error = err instanceof Error ? err : new Error(String(err));
+        logger.error({ err: error.message }, 'telegram: /scrape ETL failed');
+        const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+        if (chatId) {
+          const ts = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+          await getBot().telegram.sendMessage(
+            chatId,
+            `🚨 <b>ETL Run Failed</b>\n🕐 ${ts}\nSource: /scrape\nError: ${escHtml(error.message.slice(0, 200))}`,
+            { parse_mode: 'HTML' },
+          ).catch(() => undefined);
+        }
+      });
   });
 
   b.launch().catch((err) => {
