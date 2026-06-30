@@ -150,12 +150,26 @@ async function checkAnalysisExists(jobId: string): Promise<boolean> {
   const pool = await getPool();
   const conn = await pool.getConnection();
   try {
-    const result = await conn.execute<[number]>(
-      `SELECT COUNT(*) FROM ai_analysis WHERE job_id = :job_id`,
+    const result = await conn.execute<[number, string | null]>(
+      `SELECT COUNT(*), MAX(tech_stack) FROM ai_analysis WHERE job_id = :job_id`,
       { job_id: jobId },
-      { outFormat: oracledb.OUT_FORMAT_ARRAY },
+      {
+        outFormat: oracledb.OUT_FORMAT_ARRAY,
+        fetchInfo: { TECH_STACK: { type: oracledb.STRING } },
+      },
     );
-    return ((result.rows?.[0]?.[0] as number) ?? 0) > 0;
+    const row = result.rows?.[0];
+    if (!row || (row[0] as number) === 0) return false;
+    // Re-score if tech_stack is empty array or null (scored before detail-fetch fix)
+    const techStack = row[1];
+    if (!techStack) return false;
+    try {
+      const parsed = JSON.parse(techStack) as unknown;
+      if (Array.isArray(parsed) && parsed.length === 0) return false;
+    } catch {
+      return false;
+    }
+    return true;
   } finally {
     await conn.close();
   }
@@ -316,8 +330,10 @@ export async function runEtl(): Promise<void> {
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
       .map(({ job, score, stack }) => ({
+        id: job.id,
         title: job.title,
         company: job.company,
+        url: job.url,
         salaryDisplay: formatSalaryShort(job.salary_b2b_min, job.salary_b2b_max, job.salary_uop_min, job.salary_uop_max, job.currency),
         score,
         stack,

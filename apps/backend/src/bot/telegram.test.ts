@@ -92,7 +92,7 @@ describe('sendRunDigest', () => {
       inserted: 48,
       scored: 48,
       fallback: 0,
-      topJobs: [{ title: 'TS Dev', company: 'Acme', salaryDisplay: '18k–24k PLN (B2B)', score: 95, stack: ['TypeScript', 'Node.js'] }],
+      topJobs: [{ id: 'jj-abc123', title: 'TS Dev', company: 'Acme', url: 'https://justjoin.it/offers/acme-ts-dev', salaryDisplay: '18k–24k PLN (B2B)', score: 95, stack: ['TypeScript', 'Node.js'] }],
     });
 
     expect(capturedBody).not.toBeNull();
@@ -103,6 +103,9 @@ describe('sendRunDigest', () => {
     expect(text).toContain('TS Dev');
     expect(text).toContain('18k–24k PLN (B2B)');
     expect(text).toContain('TypeScript');
+    const keyboard = capturedBody!['reply_markup'] as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+    expect(keyboard.inline_keyboard[0]?.[0]?.callback_data).toBe('job:0');
+    expect(keyboard.inline_keyboard[0]?.[0]?.text).toContain('TS Dev');
   });
 
   it('sends "no new jobs" when inserted = 0', async () => {

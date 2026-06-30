@@ -57,7 +57,7 @@ export async function fetchNoFluff(): Promise<Job[]> {
           const isUoP = salary?.type === 'permanent';
 
           jobs.push({
-            id: `nf-${posting.id}`,
+            id: `nf-${posting.id}`.slice(0, 100),
             title: posting.title,
             company: posting.name,
             url: posting.url

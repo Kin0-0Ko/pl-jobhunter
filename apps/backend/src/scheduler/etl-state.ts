@@ -1,6 +1,8 @@
 export interface TopJobEntry {
+  id: string;
   title: string;
   company: string;
+  url: string;
   salaryDisplay: string | null;
   score: number;
   stack: string[];

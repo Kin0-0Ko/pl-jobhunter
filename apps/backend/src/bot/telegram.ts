@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
 import pino from 'pino';
+import oracledb from 'oracledb';
 import { getPool } from '../config/database.js';
 import * as etlState from '../scheduler/etl-state.js';
 import type { ETLRunSummary } from '../scheduler/etl-state.js';
@@ -25,7 +26,7 @@ function formatDigestHtml(summary: ETLRunSummary, header: string): string {
   let jobsBlock: string;
   if (summary.inserted > 0 && summary.topJobs.length > 0) {
     const jobLines = summary.topJobs.map((j, i) => {
-      const lines = [`${i + 1}. <b>${escHtml(j.title)}</b> @ ${escHtml(j.company)}`];
+      const lines = [`${i + 1}. <a href="${j.url}">${escHtml(j.title)}</a> @ ${escHtml(j.company)}`];
       if (j.salaryDisplay) lines.push(`   💰 ${escHtml(j.salaryDisplay)} · ⭐ ${j.score}`);
       else lines.push(`   ⭐ ${j.score}`);
       if (j.stack.length > 0) lines.push(`   🛠 ${j.stack.map(escHtml).join(', ')}`);
@@ -49,8 +50,16 @@ export async function sendRunDigest(summary: ETLRunSummary): Promise<void> {
     logger.warn('TELEGRAM_ADMIN_CHAT_ID not set — skipping run digest');
     return;
   }
+  const extra: { parse_mode: 'HTML'; reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } } = { parse_mode: 'HTML' };
+  if (summary.topJobs.length > 0) {
+    extra.reply_markup = {
+      inline_keyboard: summary.topJobs.map((j, i) => [
+        { text: `${i + 1}. ${j.title} @ ${j.company} ⭐${j.score}`, callback_data: `job:${i}` },
+      ]),
+    };
+  }
   try {
-    await getBot().telegram.sendMessage(chatId, formatDigestHtml(summary, 'ETL Run Complete'), { parse_mode: 'HTML' });
+    await getBot().telegram.sendMessage(chatId, formatDigestHtml(summary, 'ETL Run Complete'), extra);
   } catch (err) {
     logger.error({ err }, 'telegram: failed to send run digest');
     throw err;
@@ -80,6 +89,35 @@ export async function sendOllamaWarning(jobId: string, err: Error): Promise<void
     await getBot().telegram.sendMessage(chatId, msg);
   } catch (dispatchErr) {
     logger.error({ err: dispatchErr }, 'telegram: failed to send Ollama warning');
+  }
+}
+
+async function fetchJobDetail(jobId: string): Promise<{ summary: string; tech_stack: string; match_score: number } | null> {
+  try {
+    const pool = await getPool();
+    const conn = await pool.getConnection();
+    try {
+      const result = await conn.execute<Record<string, unknown>>(
+        `SELECT a.match_score, a.summary, a.tech_stack
+         FROM ai_analysis a WHERE a.job_id = :job_id`,
+        { job_id: jobId },
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+          fetchInfo: { SUMMARY: { type: oracledb.STRING }, TECH_STACK: { type: oracledb.STRING } },
+        },
+      );
+      const row = result.rows?.[0];
+      if (!row) return null;
+      return {
+        match_score: row['MATCH_SCORE'] as number,
+        summary: (row['SUMMARY'] as string | null) ?? '',
+        tech_stack: (row['TECH_STACK'] as string | null) ?? '[]',
+      };
+    } finally {
+      await conn.close();
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -139,6 +177,37 @@ export async function startBot(): Promise<void> {
           ).catch(() => undefined);
         }
       });
+  });
+
+  b.on('callback_query', async (ctx) => {
+    const data = 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
+    if (typeof data !== 'string' || !data.startsWith('job:')) {
+      await ctx.answerCbQuery();
+      return;
+    }
+    const idx = parseInt(data.slice(4), 10);
+    const jobs = etlState.lastRunSummary?.topJobs ?? [];
+    const entry = jobs[idx];
+    if (!entry) {
+      await ctx.answerCbQuery('Job not found');
+      return;
+    }
+    await ctx.answerCbQuery();
+    const detail = await fetchJobDetail(entry.id);
+    const stack = detail
+      ? (() => { try { return JSON.parse(detail.tech_stack) as string[]; } catch { return []; } })()
+      : entry.stack;
+    const salaryLine = entry.salaryDisplay ? `\n💰 ${escHtml(entry.salaryDisplay)}` : '';
+    const summaryLine = detail?.summary ? `\n📝 ${escHtml(detail.summary)}` : '';
+    const stackLine = stack.length > 0 ? `\n🛠 ${stack.map(escHtml).join(', ')}` : '';
+    const msg =
+      `<b>${escHtml(entry.title)}</b> @ ${escHtml(entry.company)}\n` +
+      `⭐ Score: ${detail?.match_score ?? entry.score}` +
+      salaryLine +
+      summaryLine +
+      stackLine +
+      `\n\n<a href="${entry.url}">View posting ↗</a>`;
+    await ctx.reply(msg, { parse_mode: 'HTML' });
   });
 
   b.launch().catch((err) => {
