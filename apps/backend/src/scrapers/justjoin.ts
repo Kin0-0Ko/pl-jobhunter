@@ -1,5 +1,6 @@
 import type { Job, JobStatus } from '@pl-jobhunter/shared';
 import pino from 'pino';
+import { SCORING_DESC_MAX_CHARS } from '../ai/ollama.js';
 
 interface JJDetailResponse {
   body?: string;
@@ -31,7 +32,7 @@ export async function fetchJustJoinDetail(slug: string): Promise<string | null> 
     const html = data.body;
     if (!html) return null;
     const text = stripHtml(html);
-    return text.slice(0, 2000) || null;
+    return text.slice(0, SCORING_DESC_MAX_CHARS) || null;
   } catch {
     return null;
   }
