@@ -269,7 +269,7 @@ describe('getFilterProfile() (T006)', () => {
 describe('isNegativeJob() — H2: word-boundary title matching', () => {
   const base: Job = {
     id: 'test', title: '', company: 'Corp', url: 'https://example.com',
-    source: 'nofluff', description: null,
+    source: 'nofluff', description: undefined,
     salary_b2b_min: null, salary_b2b_max: null,
     salary_uop_min: null, salary_uop_max: null,
     currency: 'PLN', status: 'NEW', created_at: new Date().toISOString(),
