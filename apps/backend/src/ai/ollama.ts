@@ -288,7 +288,7 @@ async function callOllamaRaw(prompt: string, numPredict: number): Promise<string
     const res = await fetch(`${baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict } }),
+      body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict, temperature: 0, seed: 42, top_p: 1 } }),
       signal: controller.signal,
     });
 
@@ -395,7 +395,7 @@ export async function scoreJob(job: Job, profile?: string): Promise<OllamaScoreR
   logger.debug({ job_id: job.id, summary: pass1.summary, tech_stack: pass1.tech_stack }, '[ETL] pass1 complete');
 
   const matchScore = await callPass2(pass1, userProfile, job.id);
-  const finalScore = summaryOk ? matchScore : 10;
+  const finalScore = summaryOk ? matchScore : -1;
 
   return {
     match_score: finalScore,

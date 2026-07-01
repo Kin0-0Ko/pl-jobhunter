@@ -81,6 +81,35 @@ export async function sendCriticalAlert(source: string, err: Error): Promise<voi
   }
 }
 
+export async function sendNewJobAlert(job: {
+  id: string;
+  title: string;
+  company: string;
+  url: string;
+  salaryDisplay: string | null;
+  score: number;
+  summary: string;
+  stack: string[];
+}): Promise<void> {
+  const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!chatId) return;
+  const salaryLine = job.salaryDisplay ? `\n💰 ${escHtml(job.salaryDisplay)}` : '';
+  const summaryLine = job.summary ? `\n📝 ${escHtml(job.summary)}` : '';
+  const stackLine = job.stack.length > 0 ? `\n🛠 ${job.stack.map(escHtml).join(', ')}` : '';
+  const msg =
+    `🆕 <b>${escHtml(job.title)}</b> @ ${escHtml(job.company)}\n` +
+    `⭐ Score: ${job.score}` +
+    salaryLine +
+    summaryLine +
+    stackLine +
+    `\n\n<a href="${job.url}">View posting ↗</a>`;
+  try {
+    await getBot().telegram.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+  } catch (err) {
+    logger.warn({ err, job_id: job.id }, 'telegram: failed to send new job alert');
+  }
+}
+
 export async function sendOllamaWarning(jobId: string, err: Error): Promise<void> {
   const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
   if (!chatId) return;

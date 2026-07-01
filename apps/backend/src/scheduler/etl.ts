@@ -8,7 +8,7 @@ import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
 import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile, getProfileFromDb, SCORING_DESC_MAX_CHARS } from '../ai/ollama.js';
-import { sendCriticalAlert, sendOllamaWarning } from '../bot/telegram.js';
+import { sendCriticalAlert, sendOllamaWarning, sendNewJobAlert } from '../bot/telegram.js';
 import * as etlState from './etl-state.js';
 import type { TopJobEntry } from './etl-state.js';
 export type { ETLRunSummary, TopJobEntry } from './etl-state.js';
@@ -165,25 +165,16 @@ async function checkAnalysisExists(jobId: string): Promise<boolean> {
   const pool = await getPool();
   const conn = await pool.getConnection();
   try {
-    const result = await conn.execute<[number, string | null]>(
-      `SELECT COUNT(*), MAX(tech_stack) FROM ai_analysis WHERE job_id = :job_id`,
+    const result = await conn.execute<[number, number | null]>(
+      `SELECT COUNT(*), MAX(match_score) FROM ai_analysis WHERE job_id = :job_id`,
       { job_id: jobId },
-      {
-        outFormat: oracledb.OUT_FORMAT_ARRAY,
-        fetchInfo: { TECH_STACK: { type: oracledb.STRING } },
-      },
+      { outFormat: oracledb.OUT_FORMAT_ARRAY },
     );
     const row = result.rows?.[0];
     if (!row || (row[0] as number) === 0) return false;
-    const techStack = row[1];
-    if (!techStack) return false;
-    try {
-      const parsed = JSON.parse(techStack) as unknown;
-      if (Array.isArray(parsed) && parsed.length === 0) return false;
-    } catch {
-      return false;
-    }
-    return true;
+    const score = row[1];
+    // Only consider scored when match_score is a real value (>=0); -1 means fallback/failed
+    return typeof score === 'number' && score >= 0;
   } finally {
     await conn.close();
   }
@@ -237,6 +228,20 @@ export async function runEtl(): Promise<void> {
 
     logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
+    // Dedup region-variants: same (title, company) appear once per Polish voivodeship on nofluff.
+    // Score once, persist once — keep first occurrence (stable sort by id).
+    const seenTitleCompany = new Set<string>();
+    const dedupedJobs: Job[] = [];
+    for (const job of jobs) {
+      const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+      if (seenTitleCompany.has(key)) continue;
+      seenTitleCompany.add(key);
+      dedupedJobs.push(job);
+    }
+    if (dedupedJobs.length < jobs.length) {
+      logger.info({ etl_run_id, before: jobs.length, after: dedupedJobs.length }, '[ETL] Deduped region-variants');
+    }
+
     let inserted = 0;
     let scored = 0;
     let filtered = 0;
@@ -246,14 +251,14 @@ export async function runEtl(): Promise<void> {
     // C1: consecutive DB failure counter — reset on success, abort on threshold exceeded
     const dbFailureAbortThreshold = Number(process.env.ETL_DB_FAILURE_ABORT_THRESHOLD ?? 10);
     let consecutiveDbFailures = 0;
-    const total = jobs.length;
+    const total = dedupedJobs.length;
 
     // M2: resolve scoring profile string once for the whole run (not per-job)
     const dbProfile = await getProfileFromDb();
     const runProfile = dbProfile ?? (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
 
     for (let chunkStart = 0; chunkStart < total; chunkStart += chunkSize) {
-      const chunk = jobs.slice(chunkStart, chunkStart + chunkSize);
+      const chunk = dedupedJobs.slice(chunkStart, chunkStart + chunkSize);
       const chunkIndex = Math.floor(chunkStart / chunkSize) + 1;
       logger.info({ etl_run_id, chunk: chunkIndex, chunkSize: chunk.length, processed: chunkStart, total }, '[ETL] Processing chunk');
 
@@ -316,7 +321,9 @@ export async function runEtl(): Promise<void> {
             continue;
           }
 
-          if (!wasInserted) {
+          if (wasInserted) {
+            inserted++;
+          } else {
             // Job already existed and is missing valid analysis — re-score it
             logger.info({ etl_run_id, job_id: job.id }, '[ETL] Existing job missing analysis — re-scoring');
           }
@@ -349,6 +356,19 @@ export async function runEtl(): Promise<void> {
 
             if (!isFallback && wasInserted) {
               runInsertedJobs.push({ job, score: analysis.match_score, stack: analysis.tech_stack });
+              // Post per-job alert immediately after scoring — only for new jobs above threshold
+              if (analysis.match_score >= threshold) {
+                await sendNewJobAlert({
+                  id: job.id,
+                  title: job.title,
+                  company: job.company,
+                  url: job.url,
+                  salaryDisplay: formatSalaryShort(job.salary_b2b_min, job.salary_b2b_max, job.salary_uop_min, job.salary_uop_max, job.currency),
+                  score: analysis.match_score,
+                  summary: analysis.summary,
+                  stack: analysis.tech_stack,
+                }).catch(() => undefined);
+              }
             }
           } catch (err) {
             logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
