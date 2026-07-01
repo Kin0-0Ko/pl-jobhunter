@@ -228,14 +228,16 @@ export async function runEtl(): Promise<void> {
 
     logger.info({ etl_run_id, total: jobs.length, ...counts }, '[ETL] Fetched jobs');
 
-    // Dedup region-variants: same (title, company) appear once per Polish voivodeship on nofluff.
-    // Score once, persist once — keep first occurrence (stable sort by id).
-    const seenTitleCompany = new Set<string>();
+    // Dedup region-variants: nofluff posts same (title, company) once per Polish voivodeship.
+    // Only deduplicate nofluff — other sources may legitimately have same title at same company.
+    const seenNofluff = new Set<string>();
     const dedupedJobs: Job[] = [];
     for (const job of jobs) {
-      const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
-      if (seenTitleCompany.has(key)) continue;
-      seenTitleCompany.add(key);
+      if (job.source === 'nofluff') {
+        const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+        if (seenNofluff.has(key)) continue;
+        seenNofluff.add(key);
+      }
       dedupedJobs.push(job);
     }
     if (dedupedJobs.length < jobs.length) {

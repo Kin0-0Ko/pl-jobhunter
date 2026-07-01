@@ -73,6 +73,7 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
       sendCriticalAlert: vi.fn().mockResolvedValue(undefined),
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -125,6 +126,7 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
       sendCriticalAlert,
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -170,6 +172,7 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
       sendCriticalAlert,
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -226,6 +229,7 @@ describe('runEtl() — US2: dedup before JustJoin detail fetch (C2)', () => {
       sendCriticalAlert: vi.fn().mockResolvedValue(undefined),
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -274,6 +278,7 @@ describe('runEtl() — US2: dedup before JustJoin detail fetch (C2)', () => {
       sendCriticalAlert: vi.fn().mockResolvedValue(undefined),
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -332,6 +337,7 @@ describe('runEtl() — US3: mergeJob updates mutable fields on match (C3/H1)', (
       sendCriticalAlert: vi.fn().mockResolvedValue(undefined),
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
@@ -387,6 +393,7 @@ describe('runEtl() — US6: parallel scrapers via Promise.allSettled (M1)', () =
       sendCriticalAlert: vi.fn().mockResolvedValue(undefined),
       sendOllamaWarning: vi.fn().mockResolvedValue(undefined),
       sendRunDigest: vi.fn().mockResolvedValue(undefined),
+      sendNewJobAlert: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { runEtl } = await import('./etl.js');
