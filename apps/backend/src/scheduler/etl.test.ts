@@ -6,7 +6,7 @@ import type { Job } from '@pl-jobhunter/shared';
 function makeJob(id: string, source: 'justjoin' | 'nofluff' = 'nofluff'): Job {
   return {
     id,
-    title: 'TypeScript Engineer',
+    title: `TypeScript Engineer ${id}`,
     company: 'Test Corp',
     url: `https://example.com/job/${id}`,
     source,
@@ -202,7 +202,7 @@ describe('runEtl() — US2: dedup before JustJoin detail fetch (C2)', () => {
           execute: vi.fn().mockImplementation((sql: string) => {
             if (sql.includes('raw_jobs')) return Promise.resolve({ rowsAffected: 1 });
             if (sql.includes('MERGE INTO jobs')) return Promise.resolve({ rowsAffected: 0 }); // already exists
-            if (sql.includes('COUNT(*)')) return Promise.resolve({ rows: [[1, '["TypeScript"]']] }); // valid analysis
+            if (sql.includes('COUNT(*)')) return Promise.resolve({ rows: [[1, 85]] }); // valid analysis — score >= 0
             return Promise.resolve({});
           }),
           close: vi.fn().mockResolvedValue(undefined),
