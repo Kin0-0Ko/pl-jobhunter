@@ -8,6 +8,8 @@ import { getPool } from '../config/database.js';
 
 // Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
 const ollamaLimit = pLimit(1);
+// Cloud NVIDIA path has no local RAM constraint — allow higher concurrency, bounded to avoid rate-limit storms
+const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 5));
 
 // Shared description cap: used by both the JustJoin detail fetch and the Pass-1 prompt slice.
 // Keeping them in sync prevents the scored text from being shorter than the fetched text.
@@ -344,22 +346,22 @@ async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string
   }
 }
 
-// AI_PROVIDER toggle: 'ollama' (default, local — RAM-bounded via ollamaLimit) or 'nvidia' (cloud, OpenAI-compatible)
-async function callAIRaw(prompt: string, numPredict: number): Promise<string> {
+// AI_PROVIDER toggle: 'ollama' (default, local — RAM-bounded via ollamaLimit) or 'nvidia' (cloud, higher concurrency)
+function callAIRaw(prompt: string, numPredict: number): Promise<string> {
   const provider = process.env.AI_PROVIDER ?? 'ollama';
-  if (provider === 'nvidia') return callNvidiaRaw(prompt, numPredict);
-  return callOllamaRaw(prompt, numPredict);
+  if (provider === 'nvidia') return nvidiaLimit(() => callNvidiaRaw(prompt, numPredict));
+  return ollamaLimit(() => callOllamaRaw(prompt, numPredict));
 }
 
 async function callPass1(job: Job): Promise<Pass1Result | null> {
   const prompt = buildPass1Prompt(job);
   let raw: string;
   try {
-    raw = await ollamaLimit(() => callAIRaw(prompt, 250));
+    raw = await callAIRaw(prompt, 250);
   } catch (err) {
     logger.warn({ err, job_id: job.id }, '[ETL] pass1: Ollama HTTP error, retrying');
     try {
-      raw = await ollamaLimit(() => callAIRaw(prompt, 250));
+      raw = await callAIRaw(prompt, 250);
     } catch (retryErr) {
       logger.error({ err: retryErr, job_id: job.id }, '[ETL] pass1: retry failed');
       return null;
@@ -390,11 +392,11 @@ async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string)
   const prompt = buildPass2Prompt(pass1, userProfile);
   let raw: string;
   try {
-    raw = await ollamaLimit(() => callAIRaw(prompt, 50));
+    raw = await callAIRaw(prompt, 50);
   } catch (err) {
     logger.warn({ err, job_id: jobId }, '[ETL] pass2: Ollama HTTP error, retrying');
     try {
-      raw = await ollamaLimit(() => callAIRaw(prompt, 50));
+      raw = await callAIRaw(prompt, 50);
     } catch (retryErr) {
       logger.error({ err: retryErr, job_id: jobId }, '[ETL] pass2: retry failed');
       return -1;
