@@ -2,6 +2,7 @@ import type { Job } from '@pl-jobhunter/shared';
 import oracledb from 'oracledb';
 import pino from 'pino';
 import pLimit from 'p-limit';
+import OpenAI from 'openai';
 import { repairAndParse, repairAndParseLoose } from './json-repair.js';
 import { getPool } from '../config/database.js';
 
@@ -300,15 +301,65 @@ async function callOllamaRaw(prompt: string, numPredict: number): Promise<string
   }
 }
 
+let nvidiaClient: OpenAI | null = null;
+function getNvidiaClient(): OpenAI {
+  if (!nvidiaClient) {
+    const apiKey = process.env.NVIDIA_API_KEY;
+    if (!apiKey) throw new Error('NVIDIA_API_KEY not set (required when AI_PROVIDER=nvidia)');
+    nvidiaClient = new OpenAI({
+      apiKey,
+      baseURL: process.env.NVIDIA_BASE_URL ?? 'https://integrate.api.nvidia.com/v1',
+    });
+  }
+  return nvidiaClient;
+}
+
+async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string> {
+  const model = process.env.NVIDIA_MODEL ?? 'z-ai/glm-5.2';
+  const timeoutMs = Number(process.env.NVIDIA_TIMEOUT_MS ?? 60000);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const completion = await getNvidiaClient().chat.completions.create(
+      {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
+        top_p: 1,
+        max_tokens: numPredict,
+        seed: 42,
+        response_format: { type: 'json_object' },
+        stream: false,
+      },
+      { signal: controller.signal },
+    );
+
+    const content = completion.choices[0]?.message?.content;
+    if (!content) throw new Error('NVIDIA API returned empty content');
+    return content;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// AI_PROVIDER toggle: 'ollama' (default, local — RAM-bounded via ollamaLimit) or 'nvidia' (cloud, OpenAI-compatible)
+async function callAIRaw(prompt: string, numPredict: number): Promise<string> {
+  const provider = process.env.AI_PROVIDER ?? 'ollama';
+  if (provider === 'nvidia') return callNvidiaRaw(prompt, numPredict);
+  return callOllamaRaw(prompt, numPredict);
+}
+
 async function callPass1(job: Job): Promise<Pass1Result | null> {
   const prompt = buildPass1Prompt(job);
   let raw: string;
   try {
-    raw = await ollamaLimit(() => callOllamaRaw(prompt, 250));
+    raw = await ollamaLimit(() => callAIRaw(prompt, 250));
   } catch (err) {
     logger.warn({ err, job_id: job.id }, '[ETL] pass1: Ollama HTTP error, retrying');
     try {
-      raw = await ollamaLimit(() => callOllamaRaw(prompt, 250));
+      raw = await ollamaLimit(() => callAIRaw(prompt, 250));
     } catch (retryErr) {
       logger.error({ err: retryErr, job_id: job.id }, '[ETL] pass1: retry failed');
       return null;
@@ -339,11 +390,11 @@ async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string)
   const prompt = buildPass2Prompt(pass1, userProfile);
   let raw: string;
   try {
-    raw = await ollamaLimit(() => callOllamaRaw(prompt, 50));
+    raw = await ollamaLimit(() => callAIRaw(prompt, 50));
   } catch (err) {
     logger.warn({ err, job_id: jobId }, '[ETL] pass2: Ollama HTTP error, retrying');
     try {
-      raw = await ollamaLimit(() => callOllamaRaw(prompt, 50));
+      raw = await ollamaLimit(() => callAIRaw(prompt, 50));
     } catch (retryErr) {
       logger.error({ err: retryErr, job_id: jobId }, '[ETL] pass2: retry failed');
       return -1;
