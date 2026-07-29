@@ -302,11 +302,6 @@ interface BatchPrescreenEntry {
   relevant?: string;
 }
 
-interface BatchScoreEntry {
-  i: number;
-  match_score?: number;
-}
-
 function buildBatchPrescreenPrompt(jobs: Job[]): string {
   const entries = jobs
     .map((job, i) => {
@@ -416,11 +411,12 @@ async function callBatchScore(entries: Array<{ i: number; summary: string; tech_
   }
 
   const map = new Map<number, number>();
-  for (const entry of arr as BatchScoreEntry[]) {
-    const i = typeof entry.i === 'number' ? entry.i : NaN;
+  for (const entry of arr) {
+    const i = typeof entry['i'] === 'number' ? entry['i'] : NaN;
     if (!Number.isFinite(i)) continue;
-    if (typeof entry.match_score !== 'number' && typeof entry.match_score !== 'string') continue;
-    map.set(i, normalizeScore(entry.match_score));
+    const score = entry['match_score'];
+    if (typeof score !== 'number' && typeof score !== 'string') continue;
+    map.set(i, normalizeScore(score));
   }
   return map;
 }
