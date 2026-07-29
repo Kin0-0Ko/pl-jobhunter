@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { scoreJob, isFirstPersonInverted, normalizeScore, buildFallbackRecord, isRelevantJob, getFilterProfile, isNegativeJob, SCORING_DESC_MAX_CHARS, buildPass1Prompt } from './ollama.js';
+import { scoreJob, scoreJobsBatch, isFirstPersonInverted, normalizeScore, buildFallbackRecord, SCORING_DESC_MAX_CHARS, buildPass1Prompt } from './ollama.js';
 import type { Job } from '@pl-jobhunter/shared';
 
 const server = setupServer();
@@ -202,112 +202,6 @@ describe('isFirstPersonInverted() (T018)', () => {
   it('does not flag "The role requires"', () => expect(isFirstPersonInverted('The role requires TypeScript experience')).toBe(false));
 });
 
-// T021: isRelevantJob wildcard ordering (US5)
-describe('isRelevantJob() cross-training wildcard ordering (T021)', () => {
-  const profile = { target_seniority: ['junior', 'mid'], max_experience_years: 3 };
-
-  const baseJob: Job = {
-    id: 'test',
-    title: 'Developer',
-    company: 'Corp',
-    url: 'https://example.com',
-    source: 'justjoin',
-    salary_b2b_min: null, salary_b2b_max: null,
-    salary_uop_min: null, salary_uop_max: null,
-    currency: 'PLN',
-    status: 'NEW',
-    created_at: new Date().toISOString(),
-  };
-
-  it('cross-training phrase + non-matching keywords → wildcard pass', () => {
-    const job: Job = { ...baseJob, description: 'We can teach you Go. No previous experience with Go needed.' };
-    const result = isRelevantJob(job, profile);
-    expect(result.pass).toBe(true);
-    expect(result.reason).toBe('wildcard');
-  });
-
-  it('cross-training phrase + senior title → seniority still rejects', () => {
-    const job: Job = { ...baseJob, title: 'Senior Backend Engineer', description: 'We can teach you. No previous experience needed.' };
-    const result = isRelevantJob(job, profile);
-    expect(result.pass).toBe(false);
-    expect(result.reason).toBe('seniority');
-  });
-
-  it('cross-training phrase + experience over cap → check precedence (seniority wins if title senior)', () => {
-    // wildcard should bypass experience check but seniority check runs first
-    const job: Job = { ...baseJob, title: 'Developer', description: 'Requires 5+ years experience. We can teach you the stack.' };
-    // seniority OK (no senior in title), wildcard fires before experience check per current code
-    const result = isRelevantJob(job, profile);
-    expect(result.pass).toBe(true); // wildcard runs before experience in current implementation
-    expect(result.reason).toBe('wildcard');
-  });
-});
-
-// T006: getFilterProfile (US1) — mock DB
-describe('getFilterProfile() (T006)', () => {
-  it('returns {} without warning when preferences field is null', async () => {
-    vi.doMock('../config/database.js', () => ({
-      getPool: vi.fn().mockResolvedValue({
-        getConnection: vi.fn().mockResolvedValue({
-          execute: vi.fn().mockResolvedValue({
-            rows: [{ SKILLS: '[]', PREFERRED_CONTRACT: 'b2b', SEARCH_PREFERENCES: null }],
-          }),
-          close: vi.fn(),
-        }),
-      }),
-    }));
-    // Can't easily test the logger output here without injecting logger, so we just verify shape
-    const { getFilterProfile: gfp } = await import('./ollama.js');
-    const result = await gfp();
-    expect(result).toEqual({});
-    vi.doUnmock('../config/database.js');
-  });
-});
-
-// ─── T015: US4 — H2 isNegativeJob word-boundary (title-scoped) ───────────────
-
-describe('isNegativeJob() — H2: word-boundary title matching', () => {
-  const base: Job = {
-    id: 'test', title: '', company: 'Corp', url: 'https://example.com',
-    source: 'nofluff', description: undefined,
-    salary_b2b_min: null, salary_b2b_max: null,
-    salary_uop_min: null, salary_uop_max: null,
-    currency: 'PLN', status: 'NEW', created_at: new Date().toISOString(),
-  };
-
-  it('blocks "Senior Go Developer" title (genuine Go role)', () => {
-    expect(isNegativeJob({ ...base, title: 'Senior Go Developer' })).toBe(true);
-  });
-
-  it('does NOT block "TypeScript Engineer" with "let\'s go build" in description', () => {
-    expect(isNegativeJob({ ...base, title: 'TypeScript Engineer', description: "let's go build great things with Node.js" })).toBe(false);
-  });
-
-  it('does NOT block when description says "we sap our resources" with relevant title', () => {
-    expect(isNegativeJob({ ...base, title: 'Node.js Backend Developer', description: 'we sap our legacy systems' })).toBe(false);
-  });
-
-  it('blocks "Java Developer" title', () => {
-    expect(isNegativeJob({ ...base, title: 'Java Developer' })).toBe(true);
-  });
-
-  it('does NOT block "JavaScript Engineer" (java prefix but not java word)', () => {
-    expect(isNegativeJob({ ...base, title: 'JavaScript Engineer' })).toBe(false);
-  });
-
-  it('blocks "QA Engineer" title', () => {
-    expect(isNegativeJob({ ...base, title: 'QA Engineer' })).toBe(true);
-  });
-
-  it('does NOT block "TypeScript/Node.js Developer" with incidental "sap" in description', () => {
-    expect(isNegativeJob({ ...base, title: 'TypeScript/Node.js Developer', description: 'experience with SAP integration is a plus' })).toBe(false);
-  });
-
-  it('blocks "SAP Consultant" title', () => {
-    expect(isNegativeJob({ ...base, title: 'SAP Consultant' })).toBe(true);
-  });
-});
-
 // ─── T017: US5 — H4 Pass-1 prompt uses SCORING_DESC_MAX_CHARS ────────────────
 
 describe('buildPass1Prompt() — H4: uses SCORING_DESC_MAX_CHARS', () => {
@@ -376,5 +270,100 @@ describe('scoreJob() — M2: explicit profile skips DB read', () => {
     const result = await scoreJob(mockJob, 'TypeScript/Node.js developer, B2B');
     expect(result.match_score).toBe(88);
     // If getProfileFromDb were called it would fail (no DB in test) — passing here proves it wasn't
+  });
+});
+
+// ─── scoreJobsBatch(): model-first batched prescreen + score ─────────────────
+
+function makeBatchJob(id: string, title = 'TypeScript Engineer'): Job {
+  return {
+    id, title, company: 'Corp', url: `https://example.com/${id}`,
+    source: 'justjoin', description: 'We build TypeScript microservices.',
+    salary_b2b_min: null, salary_b2b_max: null,
+    salary_uop_min: null, salary_uop_max: null,
+    currency: 'PLN', status: 'NEW', created_at: new Date().toISOString(),
+  };
+}
+
+describe('scoreJobsBatch()', () => {
+  it('returns empty map for empty input without calling the model', async () => {
+    const result = await scoreJobsBatch([], 'TypeScript developer');
+    expect(result.size).toBe(0);
+  });
+
+  it('scores multiple jobs from one prescreen + one score call', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
+    let callCount = 0;
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            response: JSON.stringify([
+              { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+              { i: 1, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+            ]),
+          });
+        }
+        return HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 90 }, { i: 1, match_score: 60 }]) });
+      }),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('a')?.match_score).toBe(90);
+    expect(result.get('b')?.match_score).toBe(60);
+    expect(callCount).toBe(2);
+  });
+
+  it('jobs marked relevant:"no" get a low deterministic score and skip the score call', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b', 'Kierowca kat. C')];
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () =>
+        HttpResponse.json({
+          response: JSON.stringify([
+            { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+            { i: 1, summary: 'Warehouse driving role, unrelated to software.', tech_stack: [], relevant: 'no' },
+          ]),
+        }),
+      ),
+      http.post('http://127.0.0.1:11434/api/generate', () => HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 75 }]) })),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('b')?.match_score).toBe(5);
+    expect(result.get('a')?.match_score).toBeDefined();
+  });
+
+  it('falls back to per-job scoreJob when prescreen JSON is unparseable', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => HttpResponse.json({ response: 'not json at all {{{' })),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    // per-job scoreJob fallback also fails to parse → fallback record, but every job still gets a result
+    expect(result.get('a')?.match_score).toBe(-1);
+    expect(result.get('b')?.match_score).toBe(-1);
+  });
+
+  it('assigns fallback record to a job missing from the model output array', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
+    let callCount = 0;
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        if (callCount === 1) {
+          // only job index 0 returned — job 1 missing
+          return HttpResponse.json({
+            response: JSON.stringify([{ i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' }]),
+          });
+        }
+        return HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 90 }]) });
+      }),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('a')?.match_score).toBe(90);
+    expect(result.get('b')?.match_score).toBe(-1);
   });
 });

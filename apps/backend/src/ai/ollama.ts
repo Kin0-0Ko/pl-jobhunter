@@ -46,172 +46,6 @@ export function buildFallbackRecord(): OllamaScoreResult {
   };
 }
 
-const PROFILE_KEYWORDS = [
-  // Core stack — must match at least one for the job to be relevant
-  'typescript', 'javascript', 'node.js', 'nodejs', 'nestjs', 'nest.js',
-  'express', 'react', 'next.js', 'nextjs', 'redux', 'vue', 'angular',
-  'postgresql', 'postgres', 'mongodb', 'mongo', 'redis', 'typeorm',
-  'rabbitmq', 'graphql', 'rest api', 'restful',
-  'docker', 'github actions',
-  'fullstack', 'full-stack', 'full stack',
-  'software engineer', 'software developer',
-  'web developer', 'web engineer', 'frontend developer', 'frontend engineer',
-  'backend developer', 'backend engineer',
-  'node developer', 'node engineer', 'js developer', 'ts developer',
-];
-
-const SENIOR_TITLE_KEYWORDS = ['senior', 'lead', 'principal', 'staff', 'architect', 'expert', 'manager', 'head of', 'director'];
-const JUNIOR_MID_SENIORITY = new Set(['junior', 'mid', 'trainee', 'intern']);
-
-const CROSS_TRAINING_PHRASES = [
-  'no previous', 'no prior', 'willing to cross-train', 'cross-train',
-  'we can teach', 'open to retraining', 'we will train', 'can teach you',
-];
-
-const EXPERIENCE_RE = /(\d+)\+?\s*(?:years?|lata?|lat)\s*(?:of\s+)?(?:experience|doświadczenia)?/gi;
-
-// H2: negative keywords matched via word-boundary regex on title only to avoid false positives
-// (e.g. ' go ' in "let's go build", 'sap ' in "we sap resources").
-// Each entry is a regex fragment; patterns are compiled once at module load.
-const NEGATIVE_PATTERNS: RegExp[] = [
-  /\bjava\b(?!script)/i,         // java but not javascript
-  /\.net\b/i, /\bdotnet\b/i, /\bc#\b/i,
-  /\bpython\b/i, /\bdjango\b/i, /\bflask\b/i,
-  /\bphp\b/i, /\blaravel\b/i, /\bsymfony\b/i,
-  /\bruby\b/i, /\brails\b/i,
-  /\bscala\b/i, /\bkotlin\b/i, /\bgolang\b/i, /\bgo\s+developer\b/i, /\bgo\s+engineer\b/i,
-  /\brust\s+developer\b/i, /\brust\s+engineer\b/i,
-  /\bios\s+developer\b/i, /\bios\s+engineer\b/i, /\bswift\s+developer\b/i,
-  /\bandroid\s+developer\b/i, /\bandroid\s+engineer\b/i,
-  /\breact\s+native\b/i,
-  /\bflutter\b/i, /\bxamarin\b/i,
-  /\bdata\s+engineer\b/i, /\bdata\s+scientist\b/i, /\bml\s+engineer\b/i,
-  /\bmachine\s+learning\b/i, /\bdata\s+analyst\b/i,
-  /\bembedded\b/i, /\bfirmware\b/i, /\bfpga\b/i,
-  /\bsap\s+\w/i, /\bsalesforce\b/i, /\bdynamics\b/i, /\bservicenow\b/i,
-  /\bpowerbi\b/i, /\bpower\s+bi\b/i, /\btableau\b/i,
-  /\bdevops\s+engineer\b/i, /\bdevops\s+specialist\b/i,
-  /\bplatform\s+engineer\b/i, /\bsite\s+reliability\b/i, /\bsre\b/i,
-  /\bcloud\s+engineer\b/i, /\binfrastructure\s+engineer\b/i,
-  /\bpostgresql\s+expert\b/i, /\bdatabase\s+administrator\b/i, /\bdba\b/i,
-  /\bqa\s+engineer\b/i, /\bqa\s+tester\b/i, /\btest\s+engineer\b/i,
-  /\btester\b/i, /\bautomation\s+engineer\b/i,
-  /\bpracownik\b/i, /\bprodukcji\b/i, /\bmagazyn\b/i, /\bkierowca\b/i, /\bspawacz\b/i,
-];
-
-export function isRelevantJob(
-  job: Job,
-  profile?: { target_seniority?: string[]; max_experience_years?: number },
-): { pass: boolean; reason?: string } {
-  const titleLower = job.title.toLowerCase();
-  const descLower = (job.description ?? '').toLowerCase();
-
-  // 1. Seniority check on title
-  const seniority = profile?.target_seniority ?? [];
-  if (
-    seniority.length > 0 &&
-    seniority.every(s => JUNIOR_MID_SENIORITY.has(s.toLowerCase())) &&
-    SENIOR_TITLE_KEYWORDS.some(kw => titleLower.includes(kw))
-  ) {
-    return { pass: false, reason: 'seniority' };
-  }
-
-  // 2. Cross-training wildcard (short-circuits experience + keyword checks)
-  if (job.description && CROSS_TRAINING_PHRASES.some(p => descLower.includes(p))) {
-    return { pass: true, reason: 'wildcard' };
-  }
-
-  // 3. Experience check on description
-  const maxExp = profile?.max_experience_years;
-  if (job.description && typeof maxExp === 'number') {
-    const matches = [...job.description.matchAll(EXPERIENCE_RE)];
-    if (matches.length > 0) {
-      const maxFound = Math.max(...matches.map(m => parseInt(m[1] ?? '0', 10)));
-      if (maxFound > maxExp) {
-        return { pass: false, reason: 'experience' };
-      }
-    }
-  }
-
-  // 4. Keyword check (existing logic)
-  if (PROFILE_KEYWORDS.length === 0) {
-    logger.warn('isRelevantJob: keyword list empty, passing all jobs');
-    return { pass: true };
-  }
-  const haystack = [job.title, job.description ?? ''].join(' ').toLowerCase();
-  if (!PROFILE_KEYWORDS.some(kw => haystack.includes(kw))) {
-    return { pass: false, reason: 'keyword' };
-  }
-
-  return { pass: true };
-}
-
-// H2: match against title only to avoid incidental substring false-positives in description
-export function isNegativeJob(job: Job): boolean {
-  const title = job.title;
-  return NEGATIVE_PATTERNS.some(re => re.test(title));
-}
-
-export interface FilterProfile {
-  target_seniority?: string[];
-  max_experience_years?: number;
-}
-
-export async function getFilterProfile(): Promise<FilterProfile> {
-  const pool = await getPool().catch((dbErr: unknown) => {
-    logger.warn(
-      { err: dbErr instanceof Error ? dbErr.message : String(dbErr) },
-      '[ETL] getFilterProfile: DB pool error — applying safe default {}',
-    );
-    return null;
-  });
-  if (!pool) return {};
-
-  const conn = await pool.getConnection();
-  try {
-    const result = await conn.execute<Record<string, unknown>>(
-      `SELECT skills, preferred_contract, search_preferences FROM user_profile WHERE id = 1`,
-      [],
-      {
-        outFormat: oracledb.OUT_FORMAT_OBJECT,
-        fetchInfo: { SEARCH_PREFERENCES: { type: oracledb.STRING } },
-      },
-    );
-    const row = result.rows?.[0];
-    if (!row) return {};
-
-    // Oracle OUT_FORMAT_OBJECT returns uppercase keys; tolerate both
-    const raw = (row['SEARCH_PREFERENCES'] ?? row['search_preferences']) as string | null | undefined;
-    if (!raw) return {};
-
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const profile: FilterProfile = {};
-      if (Array.isArray(parsed.target_seniority)) {
-        profile.target_seniority = parsed.target_seniority as string[];
-      }
-      if (typeof parsed.max_experience_years === 'number') {
-        profile.max_experience_years = parsed.max_experience_years;
-      }
-      return profile;
-    } catch (parseErr) {
-      logger.warn(
-        { raw, err: parseErr instanceof Error ? parseErr.message : String(parseErr) },
-        '[ETL] getFilterProfile: SEARCH_PREFERENCES is present but failed JSON.parse — applying safe default {}',
-      );
-      return {};
-    }
-  } catch (dbErr) {
-    logger.warn(
-      { err: dbErr instanceof Error ? dbErr.message : String(dbErr) },
-      '[ETL] getFilterProfile: DB error — applying safe default {}',
-    );
-    return {};
-  } finally {
-    await conn.close().catch(() => undefined);
-  }
-}
-
 export async function getProfileFromDb(): Promise<string | null> {
   try {
     const pool = await getPool();
@@ -456,4 +290,230 @@ export async function scoreJob(job: Job, profile?: string): Promise<OllamaScoreR
     tech_stack: pass1.tech_stack,
     why_good: null,
   };
+}
+
+const AI_BATCH_SIZE = 8;
+const LOW_RELEVANCE_SCORE = 5;
+
+interface BatchPrescreenEntry {
+  i: number;
+  summary?: string;
+  tech_stack?: string[];
+  relevant?: string;
+}
+
+interface BatchScoreEntry {
+  i: number;
+  match_score?: number;
+}
+
+function buildBatchPrescreenPrompt(jobs: Job[]): string {
+  const entries = jobs
+    .map((job, i) => {
+      const desc = job.description ? job.description.slice(0, SCORING_DESC_MAX_CHARS) : '';
+      return `[${i}] Title: ${job.title}\nCompany: ${job.company}${desc ? `\nPosting:\n${desc}` : ''}`;
+    })
+    .join('\n\n');
+
+  return `For each job below, extract metadata and judge whether it could plausibly interest the candidate profile (be generous — only mark "no" for jobs clearly unrelated to software development). Output ONLY a valid JSON array, no markdown.
+
+${entries}
+
+Return exactly one entry per job, in this shape: [{"i":<index>,"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>],"relevant":"yes"|"maybe"|"no"}]`;
+}
+
+function buildBatchScorePrompt(entries: Array<{ i: number; summary: string; tech_stack: string[] }>, userProfile: string): string {
+  const list = entries
+    .map(e => `[${e.i}] Role: ${e.summary}\nTechnologies required: ${e.tech_stack.length > 0 ? e.tech_stack.join(', ') : 'not specified'}`)
+    .join('\n\n');
+
+  return `Score candidate fit for each job below against the candidate profile. Output ONLY a valid JSON array, no markdown.
+
+Candidate skills: ${userProfile}
+
+${list}
+
+Scoring guide: 90-100=almost every required technology matches; 70-89=most match; 50-69=partial match; 30-49=few match; 0-29=almost nothing matches.
+Be strict. Only score high if required technologies explicitly match candidate skills.
+
+Return exactly one entry per job, in this shape: [{"i":<index>,"match_score":<integer 0-100>}]`;
+}
+
+function parseJsonArrayLoose(raw: string): Record<string, unknown>[] | null {
+  const stripped = raw
+    .trim()
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+  const start = stripped.indexOf('[');
+  const end = stripped.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) return null;
+  try {
+    const v = JSON.parse(stripped.slice(start, end + 1)) as unknown;
+    return Array.isArray(v) ? (v as Record<string, unknown>[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescreenEntry> | null> {
+  const prompt = buildBatchPrescreenPrompt(jobs);
+  const numPredict = 200 * jobs.length + 200;
+  let raw: string;
+  try {
+    raw = await callAIRaw(prompt, numPredict);
+  } catch (err) {
+    logger.warn({ err }, '[ETL] batch prescreen: HTTP error, retrying');
+    try {
+      raw = await callAIRaw(prompt, numPredict);
+    } catch (retryErr) {
+      logger.error({ err: retryErr }, '[ETL] batch prescreen: retry failed');
+      return null;
+    }
+  }
+
+  const arr = parseJsonArrayLoose(raw);
+  if (!arr) {
+    logger.warn('[ETL] batch prescreen: JSON parse failed');
+    return null;
+  }
+
+  const map = new Map<number, BatchPrescreenEntry>();
+  for (const entry of arr) {
+    const i = typeof entry['i'] === 'number' ? entry['i'] : NaN;
+    if (!Number.isFinite(i)) continue;
+    map.set(i, {
+      i,
+      summary: typeof entry['summary'] === 'string' ? entry['summary'] : undefined,
+      tech_stack: Array.isArray(entry['tech_stack']) ? (entry['tech_stack'] as string[]) : undefined,
+      relevant: typeof entry['relevant'] === 'string' ? entry['relevant'] : undefined,
+    });
+  }
+  return map;
+}
+
+async function callBatchScore(entries: Array<{ i: number; summary: string; tech_stack: string[] }>, userProfile: string): Promise<Map<number, number> | null> {
+  const prompt = buildBatchScorePrompt(entries, userProfile);
+  const numPredict = 30 * entries.length + 100;
+  let raw: string;
+  try {
+    raw = await callAIRaw(prompt, numPredict);
+  } catch (err) {
+    logger.warn({ err }, '[ETL] batch score: HTTP error, retrying');
+    try {
+      raw = await callAIRaw(prompt, numPredict);
+    } catch (retryErr) {
+      logger.error({ err: retryErr }, '[ETL] batch score: retry failed');
+      return null;
+    }
+  }
+
+  const arr = parseJsonArrayLoose(raw);
+  if (!arr) {
+    logger.warn('[ETL] batch score: JSON parse failed');
+    return null;
+  }
+
+  const map = new Map<number, number>();
+  for (const entry of arr as BatchScoreEntry[]) {
+    const i = typeof entry.i === 'number' ? entry.i : NaN;
+    if (!Number.isFinite(i)) continue;
+    if (typeof entry.match_score !== 'number' && typeof entry.match_score !== 'string') continue;
+    map.set(i, normalizeScore(entry.match_score));
+  }
+  return map;
+}
+
+// Batched prescreen + score: replaces per-job keyword/negative filters with model judgment.
+// Every job reaches the model; "no" verdicts get a low deterministic score instead of being dropped,
+// so nothing is silently lost — it just ranks at the bottom. Falls back to per-job scoreJob on
+// malformed batch JSON so a single bad model response can't sink a whole chunk.
+export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map<string, OllamaScoreResult>> {
+  const results = new Map<string, OllamaScoreResult>();
+  if (jobs.length === 0) return results;
+
+  let userProfile: string;
+  if (profile !== undefined) {
+    userProfile = profile;
+  } else {
+    const dbProfile = await getProfileFromDb();
+    userProfile = dbProfile ?? (process.env.OLLAMA_USER_PROFILE ?? 'TypeScript/Node.js developer, remote, B2B');
+  }
+
+  for (let start = 0; start < jobs.length; start += AI_BATCH_SIZE) {
+    const batch = jobs.slice(start, start + AI_BATCH_SIZE);
+    const prescreen = await callBatchPrescreen(batch);
+
+    if (!prescreen) {
+      // Fall back to the reliable per-job path for this batch
+      logger.warn({ batchSize: batch.length }, '[ETL] batch prescreen failed — falling back to per-job scoring');
+      await Promise.all(
+        batch.map(async job => {
+          results.set(job.id, await scoreJob(job, userProfile));
+        }),
+      );
+      continue;
+    }
+
+    const survivors: Array<{ job: Job; i: number; summary: string; tech_stack: string[] }> = [];
+    batch.forEach((job, i) => {
+      const entry = prescreen.get(i);
+      if (!entry || !entry.summary) {
+        // Missing from model output — fallback, will be retried next run
+        results.set(job.id, buildFallbackRecord());
+        return;
+      }
+
+      const summaryOk = !entry.summary.includes('<') && entry.summary.trim().length >= 20;
+      const summary = summaryOk ? entry.summary : job.title;
+      let techStack = entry.tech_stack ?? [];
+      if (techStack.length === 1 && (techStack[0] ?? '').includes(',')) {
+        techStack = (techStack[0] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      if (entry.relevant === 'no') {
+        results.set(job.id, {
+          match_score: summaryOk ? LOW_RELEVANCE_SCORE : -1,
+          summary,
+          tech_stack: techStack,
+          why_good: null,
+        });
+        return;
+      }
+
+      if (!summaryOk) {
+        results.set(job.id, { match_score: -1, summary, tech_stack: techStack, why_good: null });
+        return;
+      }
+
+      survivors.push({ job, i, summary, tech_stack: techStack });
+    });
+
+    if (survivors.length === 0) continue;
+
+    const scoreMap = await callBatchScore(survivors.map(s => ({ i: s.i, summary: s.summary, tech_stack: s.tech_stack })), userProfile);
+
+    if (!scoreMap) {
+      logger.warn({ batchSize: survivors.length }, '[ETL] batch score failed — falling back to per-job scoring');
+      await Promise.all(
+        survivors.map(async s => {
+          results.set(s.job.id, await scoreJob(s.job, userProfile));
+        }),
+      );
+      continue;
+    }
+
+    for (const s of survivors) {
+      const score = scoreMap.get(s.i);
+      results.set(s.job.id, {
+        match_score: score ?? -1,
+        summary: s.summary,
+        tech_stack: s.tech_stack,
+        why_good: null,
+      });
+    }
+  }
+
+  return results;
 }

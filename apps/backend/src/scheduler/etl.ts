@@ -7,7 +7,7 @@ import { fetchJustJoin, fetchJustJoinDetail } from '../scrapers/justjoin.js';
 import { fetchNoFluff } from '../scrapers/nofluff.js';
 import { fetchTheProtocol } from '../scrapers/theprotocol.js';
 import { fetchRocketJobs } from '../scrapers/rocketjobs.js';
-import { scoreJob, isRelevantJob, isNegativeJob, getFilterProfile, getProfileFromDb, SCORING_DESC_MAX_CHARS } from '../ai/ollama.js';
+import { scoreJob, scoreJobsBatch, getProfileFromDb, SCORING_DESC_MAX_CHARS } from '../ai/ollama.js';
 import { sendCriticalAlert, sendOllamaWarning, sendNewJobAlert } from '../bot/telegram.js';
 import * as etlState from './etl-state.js';
 import type { TopJobEntry } from './etl-state.js';
@@ -193,15 +193,6 @@ export async function runEtl(): Promise<void> {
   const runInsertedJobs: Array<{ job: Job; score: number; stack: string[] }> = [];
 
   try {
-    // M2: Read profile once per run and thread into scoreJob
-    const filterProfile = await getFilterProfile();
-    const hasPrefs = Object.keys(filterProfile).length > 0;
-    if (hasPrefs) {
-      logger.info({ etl_run_id, filterProfile }, '[ETL] Filter profile resolved');
-    } else {
-      logger.info({ etl_run_id }, '[ETL] Filter profile: no preferences configured');
-    }
-
     // M1: Fetch all sources concurrently — one failure doesn't block others
     const scrapers: Array<{ name: string; fn: () => Promise<Job[]> }> = [
       { name: 'justjoin', fn: fetchJustJoin },
@@ -264,6 +255,10 @@ export async function runEtl(): Promise<void> {
       const chunkIndex = Math.floor(chunkStart / chunkSize) + 1;
       logger.info({ etl_run_id, chunk: chunkIndex, chunkSize: chunk.length, processed: chunkStart, total }, '[ETL] Processing chunk');
 
+      // Stage A: per-job DB writes (raw_jobs → dedup-check → JJT enrich → jobs).
+      // No relevance/negative pre-filtering — every structurally valid job reaches the model.
+      const toScore: Array<{ job: Job; wasInserted: boolean }> = [];
+
       for (let job of chunk) {
         try {
           // Step 1: persist all scraped jobs to raw_jobs staging table
@@ -275,17 +270,6 @@ export async function runEtl(): Promise<void> {
             continue;
           }
 
-          // Step 2: pre-filter — only promote relevant dev jobs
-          const relevance = isRelevantJob(job, filterProfile);
-          if (!relevance.pass) {
-            logger.debug({ etl_run_id, job_id: job.id, title: job.title, reason: relevance.reason }, '[ETL] Pre-filter: blocked');
-            filtered++;
-            continue;
-          }
-          if (relevance.reason === 'wildcard') {
-            logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Pre-filter: wildcard pass (cross-training)');
-          }
-
           // C2: dedup check BEFORE detail fetch — skip already-complete jobs entirely.
           // Description updates (C3) only matter when we re-score; if analysis is valid, skip.
           const existingValidAnalysis = await checkAnalysisExists(job.id).catch(() => false);
@@ -294,8 +278,8 @@ export async function runEtl(): Promise<void> {
             continue;
           }
 
-          // Step 2b: enrich JustJoin jobs with full description from v1 detail API
-          // Only reached when job is new OR missing valid analysis (C2 gate above)
+          // Step 2: enrich JustJoin jobs with full description from v1 detail API
+          // so the model scores the real posting, not the [category:...] stub.
           if (job.source === 'justjoin' && (!job.description || job.description.startsWith('[category:'))) {
             const slug = job.url.replace('https://justjoin.it/offers/', '');
             const detail = await fetchJustJoinDetail(slug);
@@ -330,53 +314,55 @@ export async function runEtl(): Promise<void> {
             logger.info({ etl_run_id, job_id: job.id }, '[ETL] Existing job missing analysis — re-scoring');
           }
 
-          // Step 4: negative blocklist — persist score 0 without Ollama call
-          if (isNegativeJob(job)) {
-            logger.info({ etl_run_id, job_id: job.id, title: job.title }, '[ETL] Negative-list: score 0, skip Ollama');
-            try {
-              await persistAnalysis(job.id, 0, job.title, [], null);
-              scored++;
-            } catch (err) {
-              logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist negative analysis');
-            }
-            continue;
-          }
-
-          // Step 5: score via Ollama — M2: pass pre-resolved profile
-          const analysis = await scoreJob(job, runProfile);
-          const isFallback = analysis.match_score === -1;
-
-          if (isFallback) {
-            await sendOllamaWarning(job.id, new Error('scoreJob returned fallback'));
-            fallback++;
-          }
-
-          try {
-            await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
-            scored++;
-            logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: isFallback }, '[ETL] Scored job');
-
-            if (!isFallback && wasInserted) {
-              runInsertedJobs.push({ job, score: analysis.match_score, stack: analysis.tech_stack });
-              // Post per-job alert immediately after scoring — only for new jobs above threshold
-              if (analysis.match_score >= threshold) {
-                await sendNewJobAlert({
-                  id: job.id,
-                  title: job.title,
-                  company: job.company,
-                  url: job.url,
-                  salaryDisplay: formatSalaryShort(job.salary_b2b_min, job.salary_b2b_max, job.salary_uop_min, job.salary_uop_max, job.currency),
-                  score: analysis.match_score,
-                  summary: analysis.summary,
-                  stack: analysis.tech_stack,
-                }).catch(() => undefined);
-              }
-            }
-          } catch (err) {
-            logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
-          }
+          toScore.push({ job, wasInserted });
         } catch (jobErr) {
           logger.warn({ etl_run_id, job_id: job.id, err: String(jobErr) }, '[ETL] Unexpected per-job error — continuing');
+        }
+      }
+
+      // Stage B: batched model scoring — one prescreen+score pass per chunk of survivors.
+      if (toScore.length === 0) continue;
+      const results = await scoreJobsBatch(toScore.map(t => t.job), runProfile);
+
+      // Stage C: persist results + alerts
+      for (const { job, wasInserted } of toScore) {
+        const analysis = results.get(job.id);
+        if (!analysis) {
+          logger.warn({ etl_run_id, job_id: job.id }, '[ETL] Missing batch result — skipping persist');
+          continue;
+        }
+        const isFallback = analysis.match_score === -1;
+        const isLowRelevance = analysis.match_score >= 0 && analysis.match_score < 10;
+        if (isLowRelevance) filtered++;
+
+        if (isFallback) {
+          await sendOllamaWarning(job.id, new Error('scoreJobsBatch returned fallback'));
+          fallback++;
+        }
+
+        try {
+          await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
+          scored++;
+          logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: isFallback }, '[ETL] Scored job');
+
+          if (!isFallback && wasInserted) {
+            runInsertedJobs.push({ job, score: analysis.match_score, stack: analysis.tech_stack });
+            // Post per-job alert immediately after scoring — only for new jobs above threshold
+            if (analysis.match_score >= threshold) {
+              await sendNewJobAlert({
+                id: job.id,
+                title: job.title,
+                company: job.company,
+                url: job.url,
+                salaryDisplay: formatSalaryShort(job.salary_b2b_min, job.salary_b2b_max, job.salary_uop_min, job.salary_uop_max, job.currency),
+                score: analysis.match_score,
+                summary: analysis.summary,
+                stack: analysis.tech_stack,
+              }).catch(() => undefined);
+            }
+          }
+        } catch (err) {
+          logger.warn({ etl_run_id, job_id: job.id, err: String(err) }, '[ETL] Failed to persist analysis');
         }
       }
     }

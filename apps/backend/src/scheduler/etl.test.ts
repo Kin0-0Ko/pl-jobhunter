@@ -63,9 +63,11 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
       scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJobsBatch: vi.fn().mockImplementation(async (jobs: Job[]) => {
+        const map = new Map();
+        for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+        return map;
+      }),
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -115,9 +117,11 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
       scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJobsBatch: vi.fn().mockImplementation(async (jobs: Job[]) => {
+        const map = new Map();
+        for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+        return map;
+      }),
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -161,9 +165,11 @@ describe('runEtl() — US1: per-job DB error isolation (C1)', () => {
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
       scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJobsBatch: vi.fn().mockImplementation(async (jobs: Job[]) => {
+        const map = new Map();
+        for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+        return map;
+      }),
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -219,9 +225,11 @@ describe('runEtl() — US2: dedup before JustJoin detail fetch (C2)', () => {
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
       scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJobsBatch: vi.fn().mockImplementation(async (jobs: Job[]) => {
+        const map = new Map();
+        for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+        return map;
+      }),
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -268,9 +276,11 @@ describe('runEtl() — US2: dedup before JustJoin detail fetch (C2)', () => {
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
       scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJobsBatch: vi.fn().mockImplementation(async (jobs: Job[]) => {
+        const map = new Map();
+        for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+        return map;
+      }),
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -297,7 +307,11 @@ describe('runEtl() — US3: mergeJob updates mutable fields on match (C3/H1)', (
   it('re-scores existing job with stub description (mergeJob updates description)', async () => {
     const jjJob = makeJob('jj-stub-job', 'justjoin');
     jjJob.description = '[category:javascript]';
-    const scoreJob = vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+    const scoreJobsBatch = vi.fn().mockImplementation(async (jobs: Job[]) => {
+      const map = new Map();
+      for (const job of jobs) map.set(job.id, { match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+      return map;
+    });
     let updateExecuted = false;
 
     vi.doMock('../config/database.js', () => ({
@@ -326,10 +340,8 @@ describe('runEtl() — US3: mergeJob updates mutable fields on match (C3/H1)', (
     vi.doMock('../scrapers/theprotocol.js', () => ({ fetchTheProtocol: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
-      scoreJob,
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJob: vi.fn().mockResolvedValue({ match_score: 80, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
+      scoreJobsBatch,
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
@@ -344,7 +356,7 @@ describe('runEtl() — US3: mergeJob updates mutable fields on match (C3/H1)', (
     await runEtl();
 
     expect(updateExecuted).toBe(true);
-    expect(scoreJob).toHaveBeenCalled();
+    expect(scoreJobsBatch).toHaveBeenCalled();
   });
 });
 
@@ -356,7 +368,11 @@ describe('runEtl() — US6: parallel scrapers via Promise.allSettled (M1)', () =
 
   it('uses results from passing scrapers when one scraper rejects', async () => {
     const nofluffJobs = [makeJob('nf-ok-1'), makeJob('nf-ok-2')];
-    const scoreJob = vi.fn().mockResolvedValue({ match_score: 75, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+    const scoreJobsBatch = vi.fn().mockImplementation(async (jobs: Job[]) => {
+      const map = new Map();
+      for (const job of jobs) map.set(job.id, { match_score: 75, summary: 'test', tech_stack: ['TypeScript'], why_good: null });
+      return map;
+    });
     const persistedIds: string[] = [];
 
     vi.doMock('../config/database.js', () => ({
@@ -382,10 +398,8 @@ describe('runEtl() — US6: parallel scrapers via Promise.allSettled (M1)', () =
     vi.doMock('../scrapers/theprotocol.js', () => ({ fetchTheProtocol: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../scrapers/rocketjobs.js', () => ({ fetchRocketJobs: vi.fn().mockResolvedValue([]) }));
     vi.doMock('../ai/ollama.js', () => ({
-      scoreJob,
-      isRelevantJob: vi.fn().mockReturnValue({ pass: true }),
-      isNegativeJob: vi.fn().mockReturnValue(false),
-      getFilterProfile: vi.fn().mockResolvedValue({}),
+      scoreJob: vi.fn().mockResolvedValue({ match_score: 75, summary: 'test', tech_stack: ['TypeScript'], why_good: null }),
+      scoreJobsBatch,
       getProfileFromDb: vi.fn().mockResolvedValue('TypeScript/Node.js developer'),
       SCORING_DESC_MAX_CHARS: 2000,
     }));
