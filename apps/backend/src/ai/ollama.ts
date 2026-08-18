@@ -8,8 +8,80 @@ import { getPool } from '../config/database.js';
 
 // Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
 const ollamaLimit = pLimit(1);
-// Cloud NVIDIA path has no local RAM constraint — allow higher concurrency, bounded to avoid rate-limit storms
-const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 5));
+// Cloud NVIDIA path has no local RAM constraint, but the endpoint rate-limits aggressively.
+// Concurrency alone does not pace requests — see nvidiaThrottle below for the min-interval gate.
+const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 2));
+
+// Minimum gap between two NVIDIA calls. Concurrency caps in-flight requests; this caps *rate*,
+// which is what a 429 is actually complaining about.
+const NVIDIA_MIN_INTERVAL_MS = Number(process.env.NVIDIA_MIN_INTERVAL_MS ?? 1100);
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Serialises the *start* of NVIDIA calls so they are spaced at least NVIDIA_MIN_INTERVAL_MS apart. */
+let nvidiaNextSlot = 0;
+async function nvidiaThrottle(): Promise<void> {
+  if (NVIDIA_MIN_INTERVAL_MS <= 0) return;
+  const now = Date.now();
+  const slot = Math.max(now, nvidiaNextSlot);
+  nvidiaNextSlot = slot + NVIDIA_MIN_INTERVAL_MS;
+  const wait = slot - now;
+  if (wait > 0) await sleep(wait);
+}
+
+interface HttpErrorShape {
+  status?: number;
+  headers?: Record<string, string> | undefined;
+}
+
+/** True for errors where waiting actually helps: rate limits and transient server faults. */
+export function isRetryableAIError(err: unknown): boolean {
+  const status = (err as HttpErrorShape)?.status;
+  if (status === undefined) return true; // network/abort errors — worth one more go
+  return status === 429 || status === 408 || status >= 500;
+}
+
+/** Honours a numeric `Retry-After` (seconds) when the provider sends one. */
+export function retryAfterMs(err: unknown): number | null {
+  const raw = (err as HttpErrorShape)?.headers?.['retry-after'];
+  if (raw === undefined) return null;
+  const secs = Number(raw);
+  return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : null;
+}
+
+const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS ?? 4);
+const AI_BACKOFF_BASE_MS = Number(process.env.AI_BACKOFF_BASE_MS ?? 500);
+
+/**
+ * Calls the AI provider with exponential backoff + jitter on retryable failures.
+ * Replaces the previous retry-immediately-once pattern, which re-hit 429s within ~1.5s
+ * and burned whole ETL runs into -1 fallbacks.
+ */
+async function callAIWithRetry(prompt: string, numPredict: number, label: string, jobId?: string): Promise<string> {
+  let lastErr: unknown;
+
+  for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await callAIRaw(prompt, numPredict);
+    } catch (err) {
+      lastErr = err;
+      const status = (err as HttpErrorShape)?.status;
+
+      if (!isRetryableAIError(err) || attempt === AI_MAX_ATTEMPTS) {
+        logger.error({ err, job_id: jobId, attempt, status }, `[ETL] ${label}: giving up`);
+        throw err;
+      }
+
+      // Exponential backoff with full jitter, unless the provider told us how long to wait.
+      const backoff = AI_BACKOFF_BASE_MS * 2 ** (attempt - 1);
+      const delay = retryAfterMs(err) ?? Math.round(backoff * (0.5 + Math.random() * 0.5));
+      logger.warn({ err, job_id: jobId, attempt, status, delay }, `[ETL] ${label}: retryable AI error, backing off`);
+      await sleep(delay);
+    }
+  }
+
+  throw lastErr;
+}
 
 // Shared description cap: used by both the JustJoin detail fetch and the Pass-1 prompt slice.
 // Keeping them in sync prevents the scored text from being shorter than the fetched text.
@@ -129,7 +201,14 @@ async function callOllamaRaw(prompt: string, numPredict: number): Promise<string
       signal: controller.signal,
     });
 
-    if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+    if (!res.ok) {
+      // Attach the status so isRetryableAIError can tell a 429/5xx from an unfixable 4xx.
+      // The OpenAI SDK does this for the NVIDIA path; plain fetch does not.
+      const err = new Error(`Ollama error: ${res.status}`) as Error & { status: number; headers: Record<string, string> };
+      err.status = res.status;
+      err.headers = Object.fromEntries(res.headers);
+      throw err;
+    }
     const data = (await res.json()) as { response: string };
     return data.response;
   } finally {
@@ -183,7 +262,12 @@ async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string
 // AI_PROVIDER toggle: 'ollama' (default, local — RAM-bounded via ollamaLimit) or 'nvidia' (cloud, higher concurrency)
 function callAIRaw(prompt: string, numPredict: number): Promise<string> {
   const provider = process.env.AI_PROVIDER ?? 'ollama';
-  if (provider === 'nvidia') return nvidiaLimit(() => callNvidiaRaw(prompt, numPredict));
+  if (provider === 'nvidia') {
+    return nvidiaLimit(async () => {
+      await nvidiaThrottle();
+      return callNvidiaRaw(prompt, numPredict);
+    });
+  }
   return ollamaLimit(() => callOllamaRaw(prompt, numPredict));
 }
 
@@ -191,15 +275,9 @@ async function callPass1(job: Job): Promise<Pass1Result | null> {
   const prompt = buildPass1Prompt(job);
   let raw: string;
   try {
-    raw = await callAIRaw(prompt, 250);
-  } catch (err) {
-    logger.warn({ err, job_id: job.id }, '[ETL] pass1: Ollama HTTP error, retrying');
-    try {
-      raw = await callAIRaw(prompt, 250);
-    } catch (retryErr) {
-      logger.error({ err: retryErr, job_id: job.id }, '[ETL] pass1: retry failed');
-      return null;
-    }
+    raw = await callAIWithRetry(prompt, 250, 'pass1', job.id);
+  } catch {
+    return null;
   }
 
   const result = repairAndParseLoose(raw);
@@ -226,15 +304,9 @@ async function callPass2(pass1: Pass1Result, userProfile: string, jobId: string)
   const prompt = buildPass2Prompt(pass1, userProfile);
   let raw: string;
   try {
-    raw = await callAIRaw(prompt, 50);
-  } catch (err) {
-    logger.warn({ err, job_id: jobId }, '[ETL] pass2: Ollama HTTP error, retrying');
-    try {
-      raw = await callAIRaw(prompt, 50);
-    } catch (retryErr) {
-      logger.error({ err: retryErr, job_id: jobId }, '[ETL] pass2: retry failed');
-      return -1;
-    }
+    raw = await callAIWithRetry(prompt, 50, 'pass2', jobId);
+  } catch {
+    return -1;
   }
 
   const result = repairAndParseLoose(raw);
@@ -357,15 +429,9 @@ async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescre
   const numPredict = 200 * jobs.length + 200;
   let raw: string;
   try {
-    raw = await callAIRaw(prompt, numPredict);
-  } catch (err) {
-    logger.warn({ err }, '[ETL] batch prescreen: HTTP error, retrying');
-    try {
-      raw = await callAIRaw(prompt, numPredict);
-    } catch (retryErr) {
-      logger.error({ err: retryErr }, '[ETL] batch prescreen: retry failed');
-      return null;
-    }
+    raw = await callAIWithRetry(prompt, numPredict, 'batch prescreen');
+  } catch {
+    return null;
   }
 
   const arr = parseJsonArrayLoose(raw);
@@ -393,15 +459,9 @@ async function callBatchScore(entries: Array<{ i: number; summary: string; tech_
   const numPredict = 30 * entries.length + 100;
   let raw: string;
   try {
-    raw = await callAIRaw(prompt, numPredict);
-  } catch (err) {
-    logger.warn({ err }, '[ETL] batch score: HTTP error, retrying');
-    try {
-      raw = await callAIRaw(prompt, numPredict);
-    } catch (retryErr) {
-      logger.error({ err: retryErr }, '[ETL] batch score: retry failed');
-      return null;
-    }
+    raw = await callAIWithRetry(prompt, numPredict, 'batch score');
+  } catch {
+    return null;
   }
 
   const arr = parseJsonArrayLoose(raw);

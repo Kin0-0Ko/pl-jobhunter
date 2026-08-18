@@ -65,7 +65,7 @@ describe('scoreJob() — two-pass', () => {
     expect(callCount).toBe(1); // pass1 fails immediately, no retry (repair handles it), no pass2
   });
 
-  it('retries pass1 once on HTTP error, returns fallback on second failure', async () => {
+  it('retries pass1 with backoff, returns fallback after exhausting attempts', async () => {
     let callCount = 0;
     server.use(
       http.post('http://127.0.0.1:11434/api/generate', () => {
@@ -76,7 +76,22 @@ describe('scoreJob() — two-pass', () => {
 
     const result = await scoreJob(mockJob);
     expect(result.match_score).toBe(-1);
-    expect(callCount).toBe(2); // pass1 attempt + pass1 retry, both fail → fallback, no pass2
+    // 500 is retryable: AI_MAX_ATTEMPTS attempts on pass1, all fail → fallback, no pass2.
+    expect(callCount).toBe(4);
+  });
+
+  it('does not retry a non-retryable 400 — retrying cannot fix it', async () => {
+    let callCount = 0;
+    server.use(
+      http.post('http://127.0.0.1:11434/api/generate', () => {
+        callCount++;
+        return HttpResponse.json({ error: 'bad request' }, { status: 400 });
+      })
+    );
+
+    const result = await scoreJob(mockJob);
+    expect(result.match_score).toBe(-1);
+    expect(callCount).toBe(1);
   });
 
   it('pass1 succeeds on retry, then pass2 runs', async () => {
@@ -110,7 +125,7 @@ describe('scoreJob() — two-pass', () => {
     // pass1 succeeded so we have the real summary, but match_score is -1 from failed pass2
     expect(result.match_score).toBe(-1);
     expect(result.summary).toBe(pass1Response.summary);
-    expect(callCount).toBe(3); // pass2 attempt + pass2 retry, both fail
+    expect(callCount).toBe(5); // 1 successful pass1 + AI_MAX_ATTEMPTS failed pass2 attempts
   });
 
   it('returns fallback when pass1 summary is first-person inverted', async () => {

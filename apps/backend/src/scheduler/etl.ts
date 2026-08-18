@@ -338,14 +338,19 @@ export async function runEtl(): Promise<void> {
         if (isFallback) {
           await sendOllamaWarning(job.id, new Error('scoreJobsBatch returned fallback'));
           fallback++;
+          // Do NOT persist a -1. Writing it creates an ai_analysis row, so checkAnalysisExists
+          // skips this job on every later run — a transient AI outage would poison it forever.
+          // Leaving it unwritten lets the next run rescore it.
+          logger.warn({ etl_run_id, job_id: job.id }, '[ETL] Fallback score — not persisting, will retry next run');
+          continue;
         }
 
         try {
           await persistAnalysis(job.id, analysis.match_score, analysis.summary, analysis.tech_stack, analysis.why_good);
           scored++;
-          logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: isFallback }, '[ETL] Scored job');
+          logger.info({ etl_run_id, job_id: job.id, match_score: analysis.match_score, fallback: false }, '[ETL] Scored job');
 
-          if (!isFallback && wasInserted) {
+          if (wasInserted) {
             runInsertedJobs.push({ job, score: analysis.match_score, stack: analysis.tech_stack });
             // Post per-job alert immediately after scoring — only for new jobs above threshold
             if (analysis.match_score >= threshold) {

@@ -33,8 +33,8 @@ describe('runRetention', () => {
 
     expect(res).toEqual({ jobsDeleted: 3, rawJobsDeleted: 7, cutoffDays: 30 });
     expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute.mock.calls[0][0]).toContain('DELETE FROM jobs');
-    expect(execute.mock.calls[1][0]).toContain('DELETE FROM raw_jobs');
+    expect(execute.mock.calls[0]?.[0]).toContain('DELETE FROM jobs');
+    expect(execute.mock.calls[1]?.[0]).toContain('DELETE FROM raw_jobs');
     expect(commit).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });
@@ -51,7 +51,7 @@ describe('runRetention', () => {
     process.env.RETENTION_DAYS = '7';
     const res = await runRetention();
     expect(res.cutoffDays).toBe(7);
-    expect(execute.mock.calls[0][1]).toEqual({ days: 7 });
+    expect(execute.mock.calls[0]?.[1]).toEqual({ days: 7 });
   });
 
   it.each(['0', '-5', 'abc', ''])('falls back to 30 days for invalid RETENTION_DAYS=%s', async (val) => {
