@@ -3,24 +3,13 @@ import { getPool } from '../config/database.js';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
-/** Rows older than this many days are purged. Override with RETENTION_DAYS. */
-const DEFAULT_RETENTION_DAYS = 30;
+/** Rows older than this many days are purged. */
+const RETENTION_DAYS = 30;
 
 export interface RetentionResult {
   jobsDeleted: number;
   rawJobsDeleted: number;
   cutoffDays: number;
-}
-
-function resolveRetentionDays(): number {
-  const raw = process.env.RETENTION_DAYS;
-  if (raw === undefined) return DEFAULT_RETENTION_DAYS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    logger.warn({ RETENTION_DAYS: raw }, 'retention: invalid RETENTION_DAYS, falling back to default');
-    return DEFAULT_RETENTION_DAYS;
-  }
-  return Math.floor(parsed);
 }
 
 /**
@@ -29,7 +18,7 @@ function resolveRetentionDays(): number {
  * Runs in a single transaction so a mid-purge failure leaves the DB untouched.
  */
 export async function runRetention(): Promise<RetentionResult> {
-  const cutoffDays = resolveRetentionDays();
+  const cutoffDays = RETENTION_DAYS;
   const pool = await getPool();
   const conn = await pool.getConnection();
 

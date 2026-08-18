@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const execute = vi.fn();
 const commit = vi.fn();
@@ -16,12 +16,7 @@ const { runRetention } = await import('./retention.js');
 describe('runRetention', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.RETENTION_DAYS;
     execute.mockResolvedValue({ rowsAffected: 0 });
-  });
-
-  afterEach(() => {
-    delete process.env.RETENTION_DAYS;
   });
 
   it('deletes from both tables and commits once', async () => {
@@ -47,17 +42,10 @@ describe('runRetention', () => {
     }
   });
 
-  it('honours RETENTION_DAYS override', async () => {
-    process.env.RETENTION_DAYS = '7';
-    const res = await runRetention();
-    expect(res.cutoffDays).toBe(7);
-    expect(execute.mock.calls[0]?.[1]).toEqual({ days: 7 });
-  });
-
-  it.each(['0', '-5', 'abc', ''])('falls back to 30 days for invalid RETENTION_DAYS=%s', async (val) => {
-    process.env.RETENTION_DAYS = val;
+  it('always uses the hardcoded 30-day cutoff', async () => {
     const res = await runRetention();
     expect(res.cutoffDays).toBe(30);
+    expect(execute.mock.calls[0]?.[1]).toEqual({ days: 30 });
   });
 
   it('rolls back and rethrows when a delete fails', async () => {

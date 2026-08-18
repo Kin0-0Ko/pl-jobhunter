@@ -14,7 +14,7 @@ const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 2));
 
 // Minimum gap between two NVIDIA calls. Concurrency caps in-flight requests; this caps *rate*,
 // which is what a 429 is actually complaining about.
-const NVIDIA_MIN_INTERVAL_MS = Number(process.env.NVIDIA_MIN_INTERVAL_MS ?? 1100);
+const NVIDIA_MIN_INTERVAL_MS = 1100;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -49,8 +49,8 @@ export function retryAfterMs(err: unknown): number | null {
   return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : null;
 }
 
-const AI_MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS ?? 4);
-const AI_BACKOFF_BASE_MS = Number(process.env.AI_BACKOFF_BASE_MS ?? 500);
+const AI_MAX_ATTEMPTS = 4;
+const AI_BACKOFF_BASE_MS = 500;
 
 /**
  * Calls the AI provider with exponential backoff + jitter on retryable failures.

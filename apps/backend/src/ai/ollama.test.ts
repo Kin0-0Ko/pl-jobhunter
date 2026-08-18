@@ -258,8 +258,9 @@ describe('scoreJob() — M4: AbortController timeout', () => {
 
     // Call aborted → fallback path → match_score -1
     expect(result.match_score).toBe(-1);
-    // Should resolve well within 2s (configured 200ms + retry + some slack)
-    expect(elapsed).toBeLessThan(2000);
+    // Aborts are retryable, so this is 4 × 200ms timeout plus jittered backoff
+    // (max 500+1000+2000ms). The point is that it terminates rather than hanging.
+    expect(elapsed).toBeLessThan(10000);
 
     vi.unstubAllEnvs();
   });
