@@ -10,6 +10,7 @@ import { jobsRoutes } from './routes/jobs.js';
 import { profileRoutes } from './routes/profile.js';
 import { etlRoutes } from './routes/etl.js';
 import { runEtl } from './scheduler/etl.js';
+import { runRetention } from './scheduler/retention.js';
 import * as etlState from './scheduler/etl-state.js';
 import { startBot, sendRunDigest } from './bot/telegram.js';
 
@@ -60,6 +61,12 @@ if (process.argv.includes('--run-once')) {
   process.exit(0);
 }
 
+if (process.argv.includes('--purge-once')) {
+  await runRetention();
+  await closePool();
+  process.exit(0);
+}
+
 try {
   await server.listen({ port, host });
   startBot().catch((err) => server.log.error({ err }, 'telegram bot failed to start'));
@@ -71,6 +78,12 @@ try {
       .catch((err) => server.log.error('[ETL] cron error:', err));
   });
   server.log.info('[ETL] Cron scheduled: every 3 hours');
+  cron.schedule('0 4 * * *', () => {
+    runRetention()
+      .then((res) => server.log.info(res, '[RETENTION] purge complete'))
+      .catch((err) => server.log.error({ err }, '[RETENTION] cron error'));
+  });
+  server.log.info('[RETENTION] Cron scheduled: daily at 04:00');
 } catch (err) {
   server.log.error(err);
   await closePool();

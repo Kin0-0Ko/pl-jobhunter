@@ -1,12 +1,16 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { JobWithAnalysis } from '@pl-jobhunter/shared';
 
+/** `score` preserves the backend's match_score DESC ordering; `date` sorts newest-added first. */
+export type SortBy = 'score' | 'date';
+
 export interface FilterState {
   keyword: string;
   contractType: 'b2b' | 'uop' | 'both';
   salaryMin: number | null;
   salaryMax: number | null;
-  source: 'justjoin' | 'nofluff' | 'both';
+  source: 'justjoin' | 'nofluff' | 'rocketjobs' | 'both';
+  sortBy: SortBy;
 }
 
 const DEFAULT_FILTER: FilterState = {
@@ -15,6 +19,7 @@ const DEFAULT_FILTER: FilterState = {
   salaryMin: null,
   salaryMax: null,
   source: 'both',
+  sortBy: 'score',
 };
 
 interface UseFilterResult {
@@ -74,6 +79,20 @@ export function useFilter(jobs: JobWithAnalysis[]): UseFilterResult {
     });
   }, [jobs, filters]);
 
+  const sortedJobs = useMemo(() => {
+    if (filters.sortBy === 'score') return filteredJobs;
+    // Copy before sorting — filteredJobs is memoized and read by topSkills.
+    return [...filteredJobs].sort((a, b) => {
+      const at = Date.parse(a.created_at);
+      const bt = Date.parse(b.created_at);
+      // Unparseable dates sink to the bottom rather than scrambling the order.
+      if (Number.isNaN(at) && Number.isNaN(bt)) return 0;
+      if (Number.isNaN(at)) return 1;
+      if (Number.isNaN(bt)) return -1;
+      return bt - at;
+    });
+  }, [filteredJobs, filters.sortBy]);
+
   const topSkills = useMemo(() => {
     const counts = new Map<string, number>();
     for (const job of filteredJobs) {
@@ -88,5 +107,5 @@ export function useFilter(jobs: JobWithAnalysis[]): UseFilterResult {
       .map(([skill, count]) => ({ skill, count }));
   }, [filteredJobs]);
 
-  return { filters, setFilters, clearFilters, filteredJobs, topSkills };
+  return { filters, setFilters, clearFilters, filteredJobs: sortedJobs, topSkills };
 }

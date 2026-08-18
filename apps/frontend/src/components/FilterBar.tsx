@@ -1,6 +1,13 @@
 import { useRef, useEffect } from 'react';
 import type { FilterState } from '../hooks/useFilter.js';
 
+const SOURCE_LABELS: Record<FilterState['source'], string> = {
+  both: 'All',
+  justjoin: 'JustJoin',
+  nofluff: 'NoFluff',
+  rocketjobs: 'RocketJobs',
+};
+
 interface FilterBarProps {
   filters: FilterState;
   setFilters: (patch: Partial<FilterState>) => void;
@@ -25,7 +32,8 @@ export function FilterBar({ filters, setFilters, clearFilters }: FilterBarProps)
     filters.contractType !== 'both' ||
     filters.salaryMin !== null ||
     filters.salaryMax !== null ||
-    filters.source !== 'both';
+    filters.source !== 'both' ||
+    filters.sortBy !== 'score';
 
   return (
     <div className="bg-white border-b border-gray-200 px-6 py-3 flex flex-wrap items-center gap-4">
@@ -75,7 +83,7 @@ export function FilterBar({ filters, setFilters, clearFilters }: FilterBarProps)
 
       <div className="flex items-center gap-2 text-sm">
         <span className="text-gray-500">Source:</span>
-        {(['both', 'justjoin', 'nofluff'] as const).map((s) => (
+        {(['both', 'justjoin', 'nofluff', 'rocketjobs'] as const).map((s) => (
           <label key={s} className="flex items-center gap-1 cursor-pointer">
             <input
               type="radio"
@@ -84,7 +92,23 @@ export function FilterBar({ filters, setFilters, clearFilters }: FilterBarProps)
               checked={filters.source === s}
               onChange={() => setFilters({ source: s })}
             />
-            {s === 'both' ? 'All' : s === 'justjoin' ? 'JustJoin' : 'NoFluff'}
+            {SOURCE_LABELS[s]}
+          </label>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-gray-500">Sort:</span>
+        {(['score', 'date'] as const).map((s) => (
+          <label key={s} className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="radio"
+              name="sortBy"
+              value={s}
+              checked={filters.sortBy === s}
+              onChange={() => setFilters({ sortBy: s })}
+            />
+            {s === 'score' ? 'Match score' : 'Date added'}
           </label>
         ))}
       </div>

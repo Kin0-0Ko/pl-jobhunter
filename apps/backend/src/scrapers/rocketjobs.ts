@@ -56,7 +56,7 @@ export async function fetchRocketJobs(): Promise<Job[]> {
             title: offer.title,
             company: offer.companyName,
             url: `https://rocketjobs.pl/offer/${offer.slug}`,
-            source: 'justjoin',
+            source: 'rocketjobs',
             salary_b2b_min: b2b?.fromPln ?? null,
             salary_b2b_max: b2b?.toPln ?? null,
             salary_uop_min: uop?.fromPln ?? null,
