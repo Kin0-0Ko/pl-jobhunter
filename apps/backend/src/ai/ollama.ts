@@ -249,7 +249,7 @@ async function callPass1(job: Job): Promise<Pass1Result | null> {
 
   const result = repairAndParseLoose(raw);
   if (!result.ok) {
-    logger.warn({ reason: result.reason, job_id: job.id }, '[ETL] pass1: JSON repair failed');
+    logger.warn({ reason: result.reason, raw, job_id: job.id }, '[ETL] pass1: JSON repair failed');
     return null;
   }
 
@@ -403,7 +403,7 @@ async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescre
 
   const arr = parseJsonArrayLoose(raw);
   if (!arr) {
-    logger.warn('[ETL] batch prescreen: JSON parse failed');
+    logger.warn({ raw }, '[ETL] batch prescreen: JSON parse failed');
     return null;
   }
 
