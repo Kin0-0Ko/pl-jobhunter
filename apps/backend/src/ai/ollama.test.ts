@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+
+// Retry/backoff tests run multiple AI_MAX_ATTEMPTS with full exponential backoff (up to
+// 500+1000+2000ms per pass, x2 for two-pass) — bump past vitest's 5000ms default for this file.
+vi.setConfig({ testTimeout: 15000 });
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { scoreJob, scoreJobsBatch, isFirstPersonInverted, normalizeScore, buildFallbackRecord, SCORING_DESC_MAX_CHARS, buildPass1Prompt } from './ollama.js';
@@ -6,9 +10,17 @@ import type { Job } from '@pl-jobhunter/shared';
 
 const server = setupServer();
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+beforeAll(() => {
+  vi.stubEnv('NVIDIA_API_KEY', 'test-key');
+  // Tests hit msw mocks, not the real rate-limited endpoint — no need to pace requests.
+  vi.stubEnv('NVIDIA_MIN_INTERVAL_MS', '0');
+  server.listen({ onUnhandledRequest: 'error' });
+});
 afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+afterAll(() => {
+  server.close();
+  vi.unstubAllEnvs();
+});
 
 const mockJob: Job = {
   id: 'jj-test-1',
@@ -36,10 +48,10 @@ describe('scoreJob() — two-pass', () => {
   it('returns merged result on both passes succeeding', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
-        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
+        if (callCount === 1) return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass1Response) } }] });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass2Response) } }] });
       })
     );
 
@@ -54,9 +66,9 @@ describe('scoreJob() — two-pass', () => {
   it('returns fallback when pass1 JSON is unrepairable (no pass2 call)', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        return HttpResponse.json({ response: 'not valid json {{{' });
+        return HttpResponse.json({ choices: [{ message: { content: 'not valid json {{{' } }] });
       })
     );
 
@@ -68,7 +80,7 @@ describe('scoreJob() — two-pass', () => {
   it('retries pass1 with backoff, returns fallback after exhausting attempts', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
         return HttpResponse.json({ error: 'model not loaded' }, { status: 500 });
       })
@@ -83,7 +95,7 @@ describe('scoreJob() — two-pass', () => {
   it('does not retry a non-retryable 400 — retrying cannot fix it', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
         return HttpResponse.json({ error: 'bad request' }, { status: 400 });
       })
@@ -97,11 +109,11 @@ describe('scoreJob() — two-pass', () => {
   it('pass1 succeeds on retry, then pass2 runs', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
         if (callCount === 1) return HttpResponse.json({ error: 'timeout' }, { status: 503 });
-        if (callCount === 2) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
-        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
+        if (callCount === 2) return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass1Response) } }] });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass2Response) } }] });
       })
     );
 
@@ -114,9 +126,9 @@ describe('scoreJob() — two-pass', () => {
   it('returns pass1 summary with match_score -1 when pass2 fails', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
+        if (callCount === 1) return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass1Response) } }] });
         return HttpResponse.json({ error: 'overload' }, { status: 503 });
       })
     );
@@ -130,8 +142,8 @@ describe('scoreJob() — two-pass', () => {
 
   it('returns fallback when pass1 summary is first-person inverted', async () => {
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
-        HttpResponse.json({ response: JSON.stringify({ summary: 'I am a TypeScript developer seeking remote work.', tech_stack: [] }) })
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
+        HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ summary: 'I am a TypeScript developer seeking remote work.', tech_stack: [] }) } }] })
       )
     );
 
@@ -144,8 +156,8 @@ describe('scoreJob() — two-pass', () => {
 describe('scoreJob() — fallback contract (T010)', () => {
   it('returns fallback record (match_score -1, non-empty summary) when pass1 JSON unrepairable', async () => {
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
-        HttpResponse.json({ response: 'not valid json {{{' })
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
+        HttpResponse.json({ choices: [{ message: { content: 'not valid json {{{' } }] })
       )
     );
     const result = await scoreJob(mockJob);
@@ -155,7 +167,7 @@ describe('scoreJob() — fallback contract (T010)', () => {
 
   it('returns fallback record when pass1 HTTP errors on both attempts', async () => {
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
         HttpResponse.json({ error: 'server error' }, { status: 500 })
       )
     );
@@ -167,10 +179,10 @@ describe('scoreJob() — fallback contract (T010)', () => {
   it('uses job title as summary fallback when pass1 returns empty summary string', async () => {
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify({ summary: '', tech_stack: [] }) });
-        return HttpResponse.json({ response: JSON.stringify({ match_score: 70 }) });
+        if (callCount === 1) return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ summary: '', tech_stack: [] }) } }] });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ match_score: 70 }) } }] });
       })
     );
     const result = await scoreJob(mockJob);
@@ -241,14 +253,14 @@ describe('buildPass1Prompt() — H4: uses SCORING_DESC_MAX_CHARS', () => {
 // ─── T020: US6 — M4 AbortController timeout ──────────────────────────────────
 
 describe('scoreJob() — M4: AbortController timeout', () => {
-  it('rejects within OLLAMA_TIMEOUT_MS when model never responds', async () => {
-    vi.stubEnv('OLLAMA_TIMEOUT_MS', '200');
+  it('rejects within NVIDIA_TIMEOUT_MS when model never responds', async () => {
+    vi.stubEnv('NVIDIA_TIMEOUT_MS', '200');
 
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', async () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', async () => {
         // Never respond — simulate hung model
         await new Promise(() => {});
-        return HttpResponse.json({ response: '{}' });
+        return HttpResponse.json({ choices: [{ message: { content: '{}' } }] });
       }),
     );
 
@@ -275,10 +287,10 @@ describe('scoreJob() — M2: explicit profile skips DB read', () => {
     let callCount = 0;
 
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        if (callCount === 1) return HttpResponse.json({ response: JSON.stringify(pass1Response) });
-        return HttpResponse.json({ response: JSON.stringify(pass2Response) });
+        if (callCount === 1) return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass1Response) } }] });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify(pass2Response) } }] });
       }),
     );
 
@@ -311,17 +323,17 @@ describe('scoreJobsBatch()', () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
         if (callCount === 1) {
           return HttpResponse.json({
-            response: JSON.stringify([
+            choices: [{ message: { content: JSON.stringify([
               { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
               { i: 1, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-            ]),
+            ]) } }],
           });
         }
-        return HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 90 }, { i: 1, match_score: 60 }]) });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 90 }, { i: 1, match_score: 60 }]) } }] });
       }),
     );
 
@@ -334,15 +346,15 @@ describe('scoreJobsBatch()', () => {
   it('jobs marked relevant:"no" get a low deterministic score and skip the score call', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b', 'Kierowca kat. C')];
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () =>
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
         HttpResponse.json({
-          response: JSON.stringify([
+          choices: [{ message: { content: JSON.stringify([
             { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
             { i: 1, summary: 'Warehouse driving role, unrelated to software.', tech_stack: [], relevant: 'no' },
-          ]),
+          ]) } }],
         }),
       ),
-      http.post('http://127.0.0.1:11434/api/generate', () => HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 75 }]) })),
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 75 }]) } }] })),
     );
 
     const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
@@ -353,7 +365,7 @@ describe('scoreJobsBatch()', () => {
   it('falls back to per-job scoreJob when prescreen JSON is unparseable', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => HttpResponse.json({ response: 'not json at all {{{' })),
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => HttpResponse.json({ choices: [{ message: { content: 'not json at all {{{' } }] })),
     );
 
     const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
@@ -366,15 +378,15 @@ describe('scoreJobsBatch()', () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     let callCount = 0;
     server.use(
-      http.post('http://127.0.0.1:11434/api/generate', () => {
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
         if (callCount === 1) {
           // only job index 0 returned — job 1 missing
           return HttpResponse.json({
-            response: JSON.stringify([{ i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' }]),
+            choices: [{ message: { content: JSON.stringify([{ i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' }]) } }],
           });
         }
-        return HttpResponse.json({ response: JSON.stringify([{ i: 0, match_score: 90 }]) });
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 90 }]) } }] });
       }),
     );
 

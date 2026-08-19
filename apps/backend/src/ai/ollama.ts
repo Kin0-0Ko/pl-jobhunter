@@ -6,25 +6,22 @@ import OpenAI from 'openai';
 import { repairAndParse, repairAndParseLoose } from './json-repair.js';
 import { getPool } from '../config/database.js';
 
-// Hard cap: 1 concurrent Ollama request to protect 1 GB RAM constraint on Oracle Always Free
-const ollamaLimit = pLimit(1);
-// Cloud NVIDIA path has no local RAM constraint, but the endpoint rate-limits aggressively.
-// Concurrency alone does not pace requests — see nvidiaThrottle below for the min-interval gate.
-const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 2));
-
-// Minimum gap between two NVIDIA calls. Concurrency caps in-flight requests; this caps *rate*,
-// which is what a 429 is actually complaining about.
-const NVIDIA_MIN_INTERVAL_MS = 1100;
+// NVIDIA is the only AI provider. Endpoint rate-limits aggressively — concurrency alone does not
+// pace requests, see nvidiaThrottle below for the min-interval gate.
+const nvidiaLimit = pLimit(Number(process.env.NVIDIA_CONCURRENCY ?? 1));
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Serialises the *start* of NVIDIA calls so they are spaced at least NVIDIA_MIN_INTERVAL_MS apart. */
+/** Serialises the *start* of NVIDIA calls so they are spaced at least NVIDIA_MIN_INTERVAL_MS apart.
+ * Concurrency caps in-flight requests; this caps *rate*, which is what a 429 is actually
+ * complaining about. Raised from 1100ms default after prod logs showed 429s still firing at that pace. */
 let nvidiaNextSlot = 0;
 async function nvidiaThrottle(): Promise<void> {
-  if (NVIDIA_MIN_INTERVAL_MS <= 0) return;
+  const minIntervalMs = Number(process.env.NVIDIA_MIN_INTERVAL_MS ?? 2500);
+  if (minIntervalMs <= 0) return;
   const now = Date.now();
   const slot = Math.max(now, nvidiaNextSlot);
-  nvidiaNextSlot = slot + NVIDIA_MIN_INTERVAL_MS;
+  nvidiaNextSlot = slot + minIntervalMs;
   const wait = slot - now;
   if (wait > 0) await sleep(wait);
 }
@@ -184,38 +181,6 @@ Be strict. Only score high if required technologies explicitly match candidate s
 Return exactly: {"match_score":<integer 0-100>}`;
 }
 
-async function callOllamaRaw(prompt: string, numPredict: number): Promise<string> {
-  const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
-  const model = process.env.OLLAMA_MODEL ?? 'qwen2.5:0.5b';
-  // M4: bound each call so a hung model can't stall the whole ETL run
-  const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? 60000);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, format: 'json', stream: false, options: { num_predict: numPredict, temperature: 0, seed: 42, top_p: 1 } }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      // Attach the status so isRetryableAIError can tell a 429/5xx from an unfixable 4xx.
-      // The OpenAI SDK does this for the NVIDIA path; plain fetch does not.
-      const err = new Error(`Ollama error: ${res.status}`) as Error & { status: number; headers: Record<string, string> };
-      err.status = res.status;
-      err.headers = Object.fromEntries(res.headers);
-      throw err;
-    }
-    const data = (await res.json()) as { response: string };
-    return data.response;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 let nvidiaClient: OpenAI | null = null;
 function getNvidiaClient(): OpenAI {
   if (!nvidiaClient) {
@@ -224,6 +189,9 @@ function getNvidiaClient(): OpenAI {
     nvidiaClient = new OpenAI({
       apiKey,
       baseURL: process.env.NVIDIA_BASE_URL ?? 'https://integrate.api.nvidia.com/v1',
+      // callAIWithRetry already does our own backoff/retry loop — the SDK's default
+      // maxRetries:2 would silently multiply every call and desync it from AI_MAX_ATTEMPTS.
+      maxRetries: 0,
     });
   }
   return nvidiaClient;
@@ -259,16 +227,11 @@ async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string
   }
 }
 
-// AI_PROVIDER toggle: 'ollama' (default, local — RAM-bounded via ollamaLimit) or 'nvidia' (cloud, higher concurrency)
 function callAIRaw(prompt: string, numPredict: number): Promise<string> {
-  const provider = process.env.AI_PROVIDER ?? 'ollama';
-  if (provider === 'nvidia') {
-    return nvidiaLimit(async () => {
-      await nvidiaThrottle();
-      return callNvidiaRaw(prompt, numPredict);
-    });
-  }
-  return ollamaLimit(() => callOllamaRaw(prompt, numPredict));
+  return nvidiaLimit(async () => {
+    await nvidiaThrottle();
+    return callNvidiaRaw(prompt, numPredict);
+  });
 }
 
 async function callPass1(job: Job): Promise<Pass1Result | null> {
