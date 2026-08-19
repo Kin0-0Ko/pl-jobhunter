@@ -380,11 +380,27 @@ function parseJsonArrayLoose(raw: string): Record<string, unknown>[] | null {
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/i, '')
     .trim();
-  const start = stripped.indexOf('[');
-  const end = stripped.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) return null;
+
+  const arrStart = stripped.indexOf('[');
+  const arrEnd = stripped.lastIndexOf(']');
+  const objStart = stripped.indexOf('{');
+  const objEnd = stripped.lastIndexOf('}');
+
+  // Some models emit a numeric-keyed object ({"0":{...},"1":{...}}) instead of an array
+  // when asked for one — prefer whichever bracket pair appears first in the response.
+  const useObject = objStart !== -1 && (arrStart === -1 || objStart < arrStart);
+
   try {
-    const v = JSON.parse(stripped.slice(start, end + 1)) as unknown;
+    if (useObject) {
+      if (objEnd < objStart) return null;
+      const v = JSON.parse(stripped.slice(objStart, objEnd + 1)) as unknown;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        return Object.values(v as Record<string, unknown>) as Record<string, unknown>[];
+      }
+      return null;
+    }
+    if (arrStart === -1 || arrEnd === -1 || arrEnd < arrStart) return null;
+    const v = JSON.parse(stripped.slice(arrStart, arrEnd + 1)) as unknown;
     return Array.isArray(v) ? (v as Record<string, unknown>[]) : null;
   } catch {
     return null;
