@@ -214,8 +214,12 @@ async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string
         max_tokens: numPredict,
         seed: 42,
         response_format: { type: 'json_object' },
+        // Reasoning models (e.g. nemotron-3-super) burn the token budget on a hidden
+        // reasoning_content pass before ever emitting JSON unless thinking is disabled.
+        // NVIDIA-specific field, not in the OpenAI SDK's request type.
+        chat_template_kwargs: { enable_thinking: false },
         stream: false,
-      },
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
       { signal: controller.signal },
     );
 
