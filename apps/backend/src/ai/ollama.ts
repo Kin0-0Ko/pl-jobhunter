@@ -425,7 +425,9 @@ async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescre
 
   const map = new Map<number, BatchPrescreenEntry>();
   for (const entry of arr) {
-    const i = typeof entry['i'] === 'number' ? entry['i'] : NaN;
+    // "i" sometimes arrives as a numeric string from this provider.
+    const iRaw = entry['i'];
+    const i = typeof iRaw === 'number' ? iRaw : Number(iRaw);
     if (!Number.isFinite(i)) continue;
     map.set(i, {
       i,
@@ -449,17 +451,22 @@ async function callBatchScore(entries: Array<{ i: number; summary: string; tech_
 
   const arr = parseJsonArrayLoose(raw);
   if (!arr) {
-    logger.warn('[ETL] batch score: JSON parse failed');
+    logger.warn({ raw }, '[ETL] batch score: JSON parse failed');
     return null;
   }
 
   const map = new Map<number, number>();
   for (const entry of arr) {
-    const i = typeof entry['i'] === 'number' ? entry['i'] : NaN;
+    // "i" and "match_score" sometimes arrive as numeric strings from this provider.
+    const iRaw = entry['i'];
+    const i = typeof iRaw === 'number' ? iRaw : Number(iRaw);
     if (!Number.isFinite(i)) continue;
     const score = entry['match_score'];
     if (typeof score !== 'number' && typeof score !== 'string') continue;
     map.set(i, normalizeScore(score));
+  }
+  if (map.size < entries.length) {
+    logger.warn({ expected: entries.length, got: map.size, raw }, '[ETL] batch score: fewer entries than expected');
   }
   return map;
 }
