@@ -322,70 +322,34 @@ describe('scoreJobsBatch()', () => {
     expect(result.size).toBe(0);
   });
 
-  it('scores multiple jobs from one prescreen + one score call', async () => {
+  it('scores multiple jobs from a single combined prescreen+score call', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     let callCount = 0;
     server.use(
       http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
         callCount++;
-        if (callCount === 1) {
-          return HttpResponse.json({
-            choices: [{ message: { content: JSON.stringify([
-              { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-              { i: 1, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-            ]) } }],
-          });
-        }
-        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 90 }, { i: 1, match_score: 60 }]) } }] });
+        return HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes', match_score: 90 },
+            '1': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes', match_score: 60 },
+          }) } }],
+        });
       }),
     );
 
     const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
     expect(result.get('a')?.match_score).toBe(90);
     expect(result.get('b')?.match_score).toBe(60);
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(1);
   });
 
-  it('scores jobs when model returns the index-keyed object shape (NVIDIA json_object mode)', async () => {
-    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
-    let callCount = 0;
-    server.use(
-      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
-        callCount++;
-        if (callCount === 1) {
-          return HttpResponse.json({
-            choices: [{ message: { content: JSON.stringify({
-              '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-              '1': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-            }) } }],
-          });
-        }
-        // Batch score prompt now asks for {"<i>":<score>} — bare numbers, not {i, match_score}.
-        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ '0': 90, '1': 60 }) } }] });
-      }),
-    );
-
-    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
-    expect(result.get('a')?.match_score).toBe(90);
-    expect(result.get('b')?.match_score).toBe(60);
-    expect(callCount).toBe(2);
-  });
-
-  it('falls back to per-job scoring when batch score response is a validator-rejection echo, not JSON', async () => {
+  it('falls back to per-job scoring when the batch response is a validator-rejection echo, not JSON', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     let callCount = 0;
     server.use(
       http.post('https://integrate.api.nvidia.com/v1/chat/completions', async ({ request }) => {
         callCount++;
         if (callCount === 1) {
-          return HttpResponse.json({
-            choices: [{ message: { content: JSON.stringify({
-              '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-              '1': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-            }) } }],
-          });
-        }
-        if (callCount === 2) {
           // Observed in prod: NVIDIA's server-side json_object validator rejects an
           // array-shaped completion and the model echoes the rejection text as content.
           return HttpResponse.json({
@@ -409,26 +373,41 @@ describe('scoreJobsBatch()', () => {
     expect(result.get('b')?.match_score).toBe(70);
   });
 
-  it('jobs marked relevant:"no" get a low deterministic score and skip the score call', async () => {
+  it('jobs marked relevant:"no" still get the model\'s match_score, not zeroed out', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b', 'Kierowca kat. C')];
     server.use(
       http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
         HttpResponse.json({
-          choices: [{ message: { content: JSON.stringify([
-            { i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
-            { i: 1, summary: 'Warehouse driving role, unrelated to software.', tech_stack: [], relevant: 'no' },
-          ]) } }],
+          choices: [{ message: { content: JSON.stringify({
+            '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes', match_score: 75 },
+            '1': { summary: 'Warehouse driving role, unrelated to software.', tech_stack: [], relevant: 'no', match_score: 3 },
+          }) } }],
         }),
       ),
-      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 75 }]) } }] })),
     );
 
     const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
-    expect(result.get('b')?.match_score).toBe(5);
-    expect(result.get('a')?.match_score).toBeDefined();
+    expect(result.get('b')?.match_score).toBe(3);
+    expect(result.get('a')?.match_score).toBe(75);
   });
 
-  it('falls back to per-job scoreJob when prescreen JSON is unparseable', async () => {
+  it('jobs marked relevant:"no" fall back to a low deterministic score if match_score is missing', async () => {
+    const jobs = [makeBatchJob('a', 'Kierowca kat. C')];
+    server.use(
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
+        HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            '0': { summary: 'Warehouse driving role, unrelated to software.', tech_stack: [], relevant: 'no' },
+          }) } }],
+        }),
+      ),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('a')?.match_score).toBe(5);
+  });
+
+  it('falls back to per-job scoreJob when batch JSON is unparseable', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     server.use(
       http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => HttpResponse.json({ choices: [{ message: { content: 'not json at all {{{' } }] })),
@@ -440,20 +419,17 @@ describe('scoreJobsBatch()', () => {
     expect(result.get('b')?.match_score).toBe(-1);
   });
 
-  it('assigns fallback record to a job missing from the model output array', async () => {
+  it('assigns fallback record to a job missing from the model output', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
-    let callCount = 0;
     server.use(
-      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
-        callCount++;
-        if (callCount === 1) {
-          // only job index 0 returned — job 1 missing
-          return HttpResponse.json({
-            choices: [{ message: { content: JSON.stringify([{ i: 0, summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' }]) } }],
-          });
-        }
-        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify([{ i: 0, match_score: 90 }]) } }] });
-      }),
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () =>
+        // only index 0 returned — job 1 missing
+        HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes', match_score: 90 },
+          }) } }],
+        }),
+      ),
     );
 
     const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');

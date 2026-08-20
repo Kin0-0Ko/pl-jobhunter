@@ -378,17 +378,22 @@ export async function scoreJob(job: Job, profile?: string): Promise<OllamaScoreR
   };
 }
 
-const AI_BATCH_SIZE = 8;
+// NVIDIA free-tier NIM is capped at 40 RPM account-wide (not per-key), and retrying during an
+// active 429 lockout has been observed to extend it rather than recover — so the real lever
+// against rate limits is fewer requests per job, not smarter backoff. Combine prescreen+score
+// into one call per batch (was two) and raise batch size, both cutting request count outright.
+const AI_BATCH_SIZE = Number(process.env.AI_BATCH_SIZE ?? 24);
 const LOW_RELEVANCE_SCORE = 5;
 
-interface BatchPrescreenEntry {
+interface BatchEntry {
   i: number;
   summary?: string;
   tech_stack?: string[];
   relevant?: string;
+  match_score?: number;
 }
 
-function buildBatchPrescreenPrompt(jobs: Job[]): string {
+function buildBatchPrompt(jobs: Job[], userProfile: string): string {
   const entries = jobs
     .map((job, i) => {
       const desc = job.description ? job.description.slice(0, SCORING_DESC_MAX_CHARS) : '';
@@ -396,34 +401,26 @@ function buildBatchPrescreenPrompt(jobs: Job[]): string {
     })
     .join('\n\n');
 
-  return `For each job below, extract metadata and judge whether it could plausibly interest the candidate profile (be generous — only mark "no" for jobs clearly unrelated to software development). Output ONLY a valid JSON object, no markdown, no array.
-
-${entries}
-
-Return exactly one entry per job, keyed by its index as a string, in this shape: {"<index>":{"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>],"relevant":"yes"|"maybe"|"no"}}`;
-}
-
-function buildBatchScorePrompt(entries: Array<{ i: number; summary: string; tech_stack: string[] }>, userProfile: string): string {
-  const list = entries
-    .map(e => `[${e.i}] Role: ${e.summary}\nTechnologies required: ${e.tech_stack.length > 0 ? e.tech_stack.join(', ') : 'not specified'}`)
-    .join('\n\n');
-
-  return `Score candidate fit for each job below against the candidate profile. Output ONLY a valid JSON object, no markdown, no array.
+  return `For each job below, extract metadata, judge relevance, and score candidate fit — all in one pass. Output ONLY a valid JSON object, no markdown, no array.
 
 Candidate skills: ${userProfile}
 
-${list}
+${entries}
 
-For each job, compute the score independently, do not pick a round number and do not reuse a score across jobs unless the math genuinely matches:
-1. Count required technologies listed for that job.
-2. Count how many of them the candidate's skills explicitly cover.
-3. base = round(100 * covered / required). If no technologies are listed, judge covered/required by overall role fit instead.
-4. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
-5. Clamp to 0-100.
+For each job:
+1. summary: one sentence on what the company builds or needs.
+2. tech_stack: only technologies explicitly named in the posting, empty array if none.
+3. relevant: "yes"/"maybe" if it could plausibly interest the candidate (be generous — only "no" for jobs clearly unrelated to software development).
+4. match_score: compute it, do not pick a round number and do not reuse a score across jobs unless the math genuinely matches.
+   a. required = count of technologies in tech_stack for that job.
+   b. covered = how many of them the candidate's skills explicitly cover.
+   c. base = round(100 * covered / required). If tech_stack is empty, judge covered/required by overall role fit instead.
+   d. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
+   e. Clamp to 0-100. If relevant is "no", match_score should still reflect actual fit (do not zero it out artificially).
 
 Example: 5 required, 3 explicitly covered, 1 adjacent match → base=60, +3 adjustment → match_score=63.
 
-Return exactly one entry per job, keyed by its index as a string, in this shape: {"<index>":<integer 0-100>}`;
+Return exactly one entry per job, keyed by its index as a string, in this shape: {"<index>":{"summary":"...","tech_stack":[...],"relevant":"yes"|"maybe"|"no","match_score":<integer 0-100>}}`;
 }
 
 /** Batch calls use response_format:json_object, which enforces an object root — so prompts ask
@@ -473,39 +470,9 @@ function parseIndexedJson(raw: string): Map<number, unknown> | null {
   }
 }
 
-async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescreenEntry> | null> {
-  const prompt = buildBatchPrescreenPrompt(jobs);
-  const numPredict = 200 * jobs.length + 200;
-  let raw: string;
-  try {
-    raw = await callAIWithRetry(prompt, numPredict, 'batch prescreen');
-  } catch {
-    return null;
-  }
-
-  const indexed = parseIndexedJson(raw);
-  if (!indexed) {
-    logger.warn({ raw }, '[ETL] batch prescreen: JSON parse failed');
-    return null;
-  }
-
-  const map = new Map<number, BatchPrescreenEntry>();
-  for (const [i, value] of indexed) {
-    const entry = value as Record<string, unknown>;
-    if (entry === null || typeof entry !== 'object') continue;
-    map.set(i, {
-      i,
-      summary: typeof entry['summary'] === 'string' ? entry['summary'] : undefined,
-      tech_stack: Array.isArray(entry['tech_stack']) ? (entry['tech_stack'] as string[]) : undefined,
-      relevant: typeof entry['relevant'] === 'string' ? entry['relevant'] : undefined,
-    });
-  }
-  return map;
-}
-
-async function callBatchScore(entries: Array<{ i: number; summary: string; tech_stack: string[] }>, userProfile: string): Promise<Map<number, number> | null> {
-  const prompt = buildBatchScorePrompt(entries, userProfile);
-  const numPredict = 30 * entries.length + 100;
+async function callBatchScoreAll(jobs: Job[], userProfile: string): Promise<Map<number, BatchEntry> | null> {
+  const prompt = buildBatchPrompt(jobs, userProfile);
+  const numPredict = 230 * jobs.length + 200;
   let raw: string;
   try {
     raw = await callAIWithRetry(prompt, numPredict, 'batch score');
@@ -519,26 +486,30 @@ async function callBatchScore(entries: Array<{ i: number; summary: string; tech_
     return null;
   }
 
-  const map = new Map<number, number>();
+  const map = new Map<number, BatchEntry>();
   for (const [i, value] of indexed) {
-    // Expected shape is {"<i>":<score>}, but tolerate {"<i>":{"match_score":<score>}} too
-    // in case the model wraps it despite the prompt, or the array fallback path was used.
-    const score = typeof value === 'object' && value !== null
-      ? (value as Record<string, unknown>)['match_score']
-      : value;
-    if (typeof score !== 'number' && typeof score !== 'string') continue;
-    map.set(i, normalizeScore(score));
+    const entry = value as Record<string, unknown>;
+    if (entry === null || typeof entry !== 'object') continue;
+    const score = entry['match_score'];
+    map.set(i, {
+      i,
+      summary: typeof entry['summary'] === 'string' ? entry['summary'] : undefined,
+      tech_stack: Array.isArray(entry['tech_stack']) ? (entry['tech_stack'] as string[]) : undefined,
+      relevant: typeof entry['relevant'] === 'string' ? entry['relevant'] : undefined,
+      match_score: typeof score === 'number' || typeof score === 'string' ? normalizeScore(score) : undefined,
+    });
   }
-  if (map.size < entries.length) {
-    logger.warn({ expected: entries.length, got: map.size, raw }, '[ETL] batch score: fewer entries than expected');
+  if (map.size < jobs.length) {
+    logger.warn({ expected: jobs.length, got: map.size, raw }, '[ETL] batch score: fewer entries than expected');
   }
   return map;
 }
 
-// Batched prescreen + score: replaces per-job keyword/negative filters with model judgment.
-// Every job reaches the model; "no" verdicts get a low deterministic score instead of being dropped,
-// so nothing is silently lost — it just ranks at the bottom. Falls back to per-job scoreJob on
-// malformed batch JSON so a single bad model response can't sink a whole chunk.
+// Single combined prescreen+score call per batch — NVIDIA's 40 RPM account-wide cap makes request
+// *count* the binding constraint, not tokens, so one bigger call beats two smaller ones. Every job
+// reaches the model; "no" verdicts still carry a real match_score instead of being dropped, so
+// nothing is silently lost — it just ranks at the bottom. Falls back to per-job scoreJob on
+// malformed batch JSON so one bad model response can't sink a whole chunk.
 export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map<string, OllamaScoreResult>> {
   const results = new Map<string, OllamaScoreResult>();
   if (jobs.length === 0) return results;
@@ -553,11 +524,11 @@ export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map
 
   for (let start = 0; start < jobs.length; start += AI_BATCH_SIZE) {
     const batch = jobs.slice(start, start + AI_BATCH_SIZE);
-    const prescreen = await callBatchPrescreen(batch);
+    const scored = await callBatchScoreAll(batch, userProfile);
 
-    if (!prescreen) {
+    if (!scored) {
       // Fall back to the reliable per-job path for this batch
-      logger.warn({ batchSize: batch.length }, '[ETL] batch prescreen failed — falling back to per-job scoring');
+      logger.warn({ batchSize: batch.length }, '[ETL] batch score failed — falling back to per-job scoring');
       await Promise.all(
         batch.map(async job => {
           results.set(job.id, await scoreJob(job, userProfile));
@@ -566,9 +537,8 @@ export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map
       continue;
     }
 
-    const survivors: Array<{ job: Job; i: number; summary: string; tech_stack: string[] }> = [];
     batch.forEach((job, i) => {
-      const entry = prescreen.get(i);
+      const entry = scored.get(i);
       if (!entry || !entry.summary) {
         // Missing from model output — fallback, will be retried next run
         results.set(job.id, buildFallbackRecord());
@@ -582,9 +552,14 @@ export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map
         techStack = (techStack[0] ?? '').split(',').map(s => s.trim()).filter(Boolean);
       }
 
+      if (!summaryOk) {
+        results.set(job.id, { match_score: -1, summary, tech_stack: techStack, why_good: null });
+        return;
+      }
+
       if (entry.relevant === 'no') {
         results.set(job.id, {
-          match_score: summaryOk ? LOW_RELEVANCE_SCORE : -1,
+          match_score: entry.match_score ?? LOW_RELEVANCE_SCORE,
           summary,
           tech_stack: techStack,
           why_good: null,
@@ -592,37 +567,13 @@ export async function scoreJobsBatch(jobs: Job[], profile?: string): Promise<Map
         return;
       }
 
-      if (!summaryOk) {
-        results.set(job.id, { match_score: -1, summary, tech_stack: techStack, why_good: null });
-        return;
-      }
-
-      survivors.push({ job, i, summary, tech_stack: techStack });
-    });
-
-    if (survivors.length === 0) continue;
-
-    const scoreMap = await callBatchScore(survivors.map(s => ({ i: s.i, summary: s.summary, tech_stack: s.tech_stack })), userProfile);
-
-    if (!scoreMap) {
-      logger.warn({ batchSize: survivors.length }, '[ETL] batch score failed — falling back to per-job scoring');
-      await Promise.all(
-        survivors.map(async s => {
-          results.set(s.job.id, await scoreJob(s.job, userProfile));
-        }),
-      );
-      continue;
-    }
-
-    for (const s of survivors) {
-      const score = scoreMap.get(s.i);
-      results.set(s.job.id, {
-        match_score: score ?? -1,
-        summary: s.summary,
-        tech_stack: s.tech_stack,
+      results.set(job.id, {
+        match_score: entry.match_score ?? -1,
+        summary,
+        tech_stack: techStack,
         why_good: null,
       });
-    }
+    });
   }
 
   return results;
