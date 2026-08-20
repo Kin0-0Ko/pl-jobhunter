@@ -204,7 +204,12 @@ export function buildPass1Prompt(job: Job): string {
 Title: ${job.title}
 Company: ${job.company}${descSection}
 
-Return exactly: {"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>]}`;
+Re-read the full posting text (not just the title) and list every specific technology,
+language, framework, tool, or platform it names (e.g. "AWS", "Kubernetes", "TypeScript",
+"PostgreSQL") — job titles alone (e.g. "DevOps Engineer", "SRE") are not technologies and do
+not count. Only leave tech_stack empty if the posting truly names none.
+
+Return exactly: {"summary":"<one sentence: what the company builds or needs>","tech_stack":[<technologies found>]}`;
 }
 
 function buildPass2Prompt(pass1: Pass1Result, userProfile: string): string {
@@ -407,14 +412,18 @@ Candidate skills: ${userProfile}
 
 ${entries}
 
-For each job:
+For each job, do these steps in order — do not skip step 2, an empty tech_stack must mean you
+actually scanned the posting text and found no named technology, not that you skipped scanning:
 1. summary: one sentence on what the company builds or needs.
-2. tech_stack: only technologies explicitly named in the posting, empty array if none.
+2. tech_stack: re-read the full posting text (not just the title) and list every specific
+   technology, language, framework, tool, or platform it names (e.g. "AWS", "Kubernetes",
+   "TypeScript", "PostgreSQL") — job titles alone (e.g. "DevOps Engineer", "SRE") are not
+   technologies and do not count. Only leave this empty if the posting truly names none.
 3. relevant: "yes"/"maybe" if it could plausibly interest the candidate (be generous — only "no" for jobs clearly unrelated to software development).
 4. match_score: compute it, do not pick a round number and do not reuse a score across jobs unless the math genuinely matches.
    a. required = count of technologies in tech_stack for that job.
    b. covered = how many of them the candidate's skills explicitly cover.
-   c. base = round(100 * covered / required). If tech_stack is empty, judge covered/required by overall role fit instead.
+   c. base = round(100 * covered / required). If tech_stack is genuinely empty after step 2, judge covered/required by overall role fit instead.
    d. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
    e. Clamp to 0-100. If relevant is "no", match_score should still reflect actual fit (do not zero it out artificially).
 
