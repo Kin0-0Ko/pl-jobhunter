@@ -396,11 +396,11 @@ function buildBatchPrescreenPrompt(jobs: Job[]): string {
     })
     .join('\n\n');
 
-  return `For each job below, extract metadata and judge whether it could plausibly interest the candidate profile (be generous — only mark "no" for jobs clearly unrelated to software development). Output ONLY a valid JSON array, no markdown.
+  return `For each job below, extract metadata and judge whether it could plausibly interest the candidate profile (be generous — only mark "no" for jobs clearly unrelated to software development). Output ONLY a valid JSON object, no markdown, no array.
 
 ${entries}
 
-Return exactly one entry per job, in this shape: [{"i":<index>,"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>],"relevant":"yes"|"maybe"|"no"}]`;
+Return exactly one entry per job, keyed by its index as a string, in this shape: {"<index>":{"summary":"<one sentence: what the company builds or needs>","tech_stack":[<only technologies explicitly named in posting, empty array if none>],"relevant":"yes"|"maybe"|"no"}}`;
 }
 
 function buildBatchScorePrompt(entries: Array<{ i: number; summary: string; tech_stack: string[] }>, userProfile: string): string {
@@ -408,7 +408,7 @@ function buildBatchScorePrompt(entries: Array<{ i: number; summary: string; tech
     .map(e => `[${e.i}] Role: ${e.summary}\nTechnologies required: ${e.tech_stack.length > 0 ? e.tech_stack.join(', ') : 'not specified'}`)
     .join('\n\n');
 
-  return `Score candidate fit for each job below against the candidate profile. Output ONLY a valid JSON array, no markdown.
+  return `Score candidate fit for each job below against the candidate profile. Output ONLY a valid JSON object, no markdown, no array.
 
 Candidate skills: ${userProfile}
 
@@ -423,10 +423,15 @@ For each job, compute the score independently, do not pick a round number and do
 
 Example: 5 required, 3 explicitly covered, 1 adjacent match → base=60, +3 adjustment → match_score=63.
 
-Return exactly one entry per job, in this shape: [{"i":<index>,"match_score":<integer 0-100>}]`;
+Return exactly one entry per job, keyed by its index as a string, in this shape: {"<index>":<integer 0-100>}`;
 }
 
-function parseJsonArrayLoose(raw: string): Record<string, unknown>[] | null {
+/** Batch calls use response_format:json_object, which enforces an object root — so prompts ask
+ * for {"<index>":<value>} keyed by job index, not an array. This parses that shape into a
+ * Map<index, value>, tolerating markdown fences/think-tags and numeric-string keys. Also accepts
+ * a raw array as a fallback in case the model ignores the object instruction, using each entry's
+ * own "i" field for the index. */
+function parseIndexedJson(raw: string): Map<number, unknown> | null {
   const stripped = raw
     .trim()
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -439,22 +444,30 @@ function parseJsonArrayLoose(raw: string): Record<string, unknown>[] | null {
   const objStart = stripped.indexOf('{');
   const objEnd = stripped.lastIndexOf('}');
 
-  // Some models emit a numeric-keyed object ({"0":{...},"1":{...}}) instead of an array
-  // when asked for one — prefer whichever bracket pair appears first in the response.
   const useObject = objStart !== -1 && (arrStart === -1 || objStart < arrStart);
 
   try {
     if (useObject) {
       if (objEnd < objStart) return null;
       const v = JSON.parse(stripped.slice(objStart, objEnd + 1)) as unknown;
-      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
-        return Object.values(v as Record<string, unknown>) as Record<string, unknown>[];
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+      const map = new Map<number, unknown>();
+      for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
+        const i = Number(key);
+        if (Number.isFinite(i)) map.set(i, value);
       }
-      return null;
+      return map;
     }
     if (arrStart === -1 || arrEnd === -1 || arrEnd < arrStart) return null;
     const v = JSON.parse(stripped.slice(arrStart, arrEnd + 1)) as unknown;
-    return Array.isArray(v) ? (v as Record<string, unknown>[]) : null;
+    if (!Array.isArray(v)) return null;
+    const map = new Map<number, unknown>();
+    for (const entry of v as Record<string, unknown>[]) {
+      const iRaw = entry?.['i'];
+      const i = typeof iRaw === 'number' ? iRaw : Number(iRaw);
+      if (Number.isFinite(i)) map.set(i, entry);
+    }
+    return map;
   } catch {
     return null;
   }
@@ -470,18 +483,16 @@ async function callBatchPrescreen(jobs: Job[]): Promise<Map<number, BatchPrescre
     return null;
   }
 
-  const arr = parseJsonArrayLoose(raw);
-  if (!arr) {
+  const indexed = parseIndexedJson(raw);
+  if (!indexed) {
     logger.warn({ raw }, '[ETL] batch prescreen: JSON parse failed');
     return null;
   }
 
   const map = new Map<number, BatchPrescreenEntry>();
-  for (const entry of arr) {
-    // "i" sometimes arrives as a numeric string from this provider.
-    const iRaw = entry['i'];
-    const i = typeof iRaw === 'number' ? iRaw : Number(iRaw);
-    if (!Number.isFinite(i)) continue;
+  for (const [i, value] of indexed) {
+    const entry = value as Record<string, unknown>;
+    if (entry === null || typeof entry !== 'object') continue;
     map.set(i, {
       i,
       summary: typeof entry['summary'] === 'string' ? entry['summary'] : undefined,
@@ -502,19 +513,19 @@ async function callBatchScore(entries: Array<{ i: number; summary: string; tech_
     return null;
   }
 
-  const arr = parseJsonArrayLoose(raw);
-  if (!arr) {
+  const indexed = parseIndexedJson(raw);
+  if (!indexed) {
     logger.warn({ raw }, '[ETL] batch score: JSON parse failed');
     return null;
   }
 
   const map = new Map<number, number>();
-  for (const entry of arr) {
-    // "i" and "match_score" sometimes arrive as numeric strings from this provider.
-    const iRaw = entry['i'];
-    const i = typeof iRaw === 'number' ? iRaw : Number(iRaw);
-    if (!Number.isFinite(i)) continue;
-    const score = entry['match_score'];
+  for (const [i, value] of indexed) {
+    // Expected shape is {"<i>":<score>}, but tolerate {"<i>":{"match_score":<score>}} too
+    // in case the model wraps it despite the prompt, or the array fallback path was used.
+    const score = typeof value === 'object' && value !== null
+      ? (value as Record<string, unknown>)['match_score']
+      : value;
     if (typeof score !== 'number' && typeof score !== 'string') continue;
     map.set(i, normalizeScore(score));
   }

@@ -274,7 +274,10 @@ describe('scoreJob() — M4: AbortController timeout', () => {
     // (max 500+1000+2000ms). The point is that it terminates rather than hanging.
     expect(elapsed).toBeLessThan(10000);
 
-    vi.unstubAllEnvs();
+    // Un-stub only this test's override — vi.unstubAllEnvs() would also clear the
+    // NVIDIA_MIN_INTERVAL_MS='0' stub set in beforeAll, reintroducing real throttling
+    // (4000ms default) into every test that runs after this one in the same file.
+    vi.stubEnv('NVIDIA_TIMEOUT_MS', '60000');
   });
 });
 
@@ -341,6 +344,69 @@ describe('scoreJobsBatch()', () => {
     expect(result.get('a')?.match_score).toBe(90);
     expect(result.get('b')?.match_score).toBe(60);
     expect(callCount).toBe(2);
+  });
+
+  it('scores jobs when model returns the index-keyed object shape (NVIDIA json_object mode)', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
+    let callCount = 0;
+    server.use(
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', () => {
+        callCount++;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            choices: [{ message: { content: JSON.stringify({
+              '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+              '1': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+            }) } }],
+          });
+        }
+        // Batch score prompt now asks for {"<i>":<score>} — bare numbers, not {i, match_score}.
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ '0': 90, '1': 60 }) } }] });
+      }),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('a')?.match_score).toBe(90);
+    expect(result.get('b')?.match_score).toBe(60);
+    expect(callCount).toBe(2);
+  });
+
+  it('falls back to per-job scoring when batch score response is a validator-rejection echo, not JSON', async () => {
+    const jobs = [makeBatchJob('a'), makeBatchJob('b')];
+    let callCount = 0;
+    server.use(
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', async ({ request }) => {
+        callCount++;
+        if (callCount === 1) {
+          return HttpResponse.json({
+            choices: [{ message: { content: JSON.stringify({
+              '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+              '1': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes' },
+            }) } }],
+          });
+        }
+        if (callCount === 2) {
+          // Observed in prod: NVIDIA's server-side json_object validator rejects an
+          // array-shaped completion and the model echoes the rejection text as content.
+          return HttpResponse.json({
+            choices: [{ message: { content: '{"0: 0, 1: 0} is not valid JSON. The correct format is an array of objects with "' } }],
+          });
+        }
+        // Per-job scoreJob fallback runs both jobs' pass1 concurrently (nvidiaLimit only
+        // serialises call *start*), so pass1/pass2 calls interleave across jobs — branch on
+        // prompt content, not call parity, to know which pass each request is.
+        const body = (await request.clone().json()) as { messages: Array<{ content: string }> };
+        const prompt = body.messages[0]?.content ?? '';
+        if (prompt.includes('Score candidate fit')) {
+          return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ match_score: 70 }) } }] });
+        }
+        return HttpResponse.json({ choices: [{ message: { content: JSON.stringify({ summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'] }) } }] });
+      }),
+    );
+
+    const result = await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(result.get('a')?.match_score).toBe(70);
+    expect(result.get('b')?.match_score).toBe(70);
   });
 
   it('jobs marked relevant:"no" get a low deterministic score and skip the score call', async () => {
