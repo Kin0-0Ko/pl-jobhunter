@@ -14,16 +14,53 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 /** Serialises the *start* of NVIDIA calls so they are spaced at least NVIDIA_MIN_INTERVAL_MS apart.
  * Concurrency caps in-flight requests; this caps *rate*, which is what a 429 is actually
- * complaining about. Raised from 1100ms default after prod logs showed 429s still firing at that pace. */
+ * complaining about. Account's console quota is 40 RPM (1 req/1500ms); 2500ms alone stayed under
+ * that but retries after a 429 still add extra requests inside the same minute, so the default is
+ * raised further to leave headroom for retry traffic. */
 let nvidiaNextSlot = 0;
 async function nvidiaThrottle(): Promise<void> {
-  const minIntervalMs = Number(process.env.NVIDIA_MIN_INTERVAL_MS ?? 2500);
+  const minIntervalMs = Number(process.env.NVIDIA_MIN_INTERVAL_MS ?? 4000);
   if (minIntervalMs <= 0) return;
   const now = Date.now();
   const slot = Math.max(now, nvidiaNextSlot);
   nvidiaNextSlot = slot + minIntervalMs;
   const wait = slot - now;
   if (wait > 0) await sleep(wait);
+}
+
+/** Circuit breaker: once consecutive rate-limit exhaustions ("giving up" after all retries) pile
+ * up, the account is clearly over quota for the minute — further requests just add to the pile
+ * instead of recovering. Pausing all NVIDIA calls for a cooldown lets the RPM window reset instead
+ * of every subsequent job burning its own retry budget into the same wall. */
+let consecutiveRateLimitExhaustions = 0;
+let cooldownUntil = 0;
+
+async function nvidiaCooldownGate(): Promise<void> {
+  const now = Date.now();
+  if (cooldownUntil > now) {
+    logger.warn({ waitMs: cooldownUntil - now }, '[ETL] NVIDIA circuit breaker: cooling down before next call');
+    await sleep(cooldownUntil - now);
+  }
+}
+
+function recordRateLimitOutcome(exhausted: boolean): void {
+  const threshold = Number(process.env.NVIDIA_BREAKER_THRESHOLD ?? 3);
+  const cooldownMs = Number(process.env.NVIDIA_BREAKER_COOLDOWN_MS ?? 60000);
+
+  if (!exhausted) {
+    consecutiveRateLimitExhaustions = 0;
+    return;
+  }
+
+  consecutiveRateLimitExhaustions++;
+  if (consecutiveRateLimitExhaustions >= threshold) {
+    cooldownUntil = Date.now() + cooldownMs;
+    logger.error(
+      { consecutiveRateLimitExhaustions, cooldownMs },
+      '[ETL] NVIDIA circuit breaker: tripped, pausing all calls',
+    );
+    consecutiveRateLimitExhaustions = 0;
+  }
 }
 
 interface HttpErrorShape {
@@ -59,13 +96,16 @@ async function callAIWithRetry(prompt: string, numPredict: number, label: string
 
   for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
     try {
-      return await callAIRaw(prompt, numPredict);
+      const result = await callAIRaw(prompt, numPredict);
+      recordRateLimitOutcome(false);
+      return result;
     } catch (err) {
       lastErr = err;
       const status = (err as HttpErrorShape)?.status;
 
       if (!isRetryableAIError(err) || attempt === AI_MAX_ATTEMPTS) {
         logger.error({ err, job_id: jobId, attempt, status }, `[ETL] ${label}: giving up`);
+        recordRateLimitOutcome(status === 429);
         throw err;
       }
 
@@ -175,8 +215,14 @@ Role: ${pass1.summary}
 Technologies required: ${tech}
 Candidate skills: ${userProfile}
 
-Scoring guide: 90-100=almost every required technology matches; 70-89=most match; 50-69=partial match; 30-49=few match; 0-29=almost nothing matches.
-Be strict. Only score high if required technologies explicitly match candidate skills.
+Compute the score, do not pick a round number:
+1. Count required technologies explicitly listed above.
+2. Count how many of them the candidate's skills explicitly cover.
+3. base = round(100 * covered / required). If no technologies are listed, judge covered/required by overall role fit instead.
+4. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
+5. Clamp to 0-100.
+
+Example: 5 required, 3 explicitly covered, 1 adjacent match → base=60, +3 adjustment → match_score=63.
 
 Return exactly: {"match_score":<integer 0-100>}`;
 }
@@ -233,6 +279,7 @@ async function callNvidiaRaw(prompt: string, numPredict: number): Promise<string
 
 function callAIRaw(prompt: string, numPredict: number): Promise<string> {
   return nvidiaLimit(async () => {
+    await nvidiaCooldownGate();
     await nvidiaThrottle();
     return callNvidiaRaw(prompt, numPredict);
   });
@@ -367,8 +414,14 @@ Candidate skills: ${userProfile}
 
 ${list}
 
-Scoring guide: 90-100=almost every required technology matches; 70-89=most match; 50-69=partial match; 30-49=few match; 0-29=almost nothing matches.
-Be strict. Only score high if required technologies explicitly match candidate skills.
+For each job, compute the score independently, do not pick a round number and do not reuse a score across jobs unless the math genuinely matches:
+1. Count required technologies listed for that job.
+2. Count how many of them the candidate's skills explicitly cover.
+3. base = round(100 * covered / required). If no technologies are listed, judge covered/required by overall role fit instead.
+4. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
+5. Clamp to 0-100.
+
+Example: 5 required, 3 explicitly covered, 1 adjacent match → base=60, +3 adjustment → match_score=63.
 
 Return exactly one entry per job, in this shape: [{"i":<index>,"match_score":<integer 0-100>}]`;
 }
