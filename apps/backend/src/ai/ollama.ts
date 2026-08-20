@@ -472,7 +472,10 @@ function parseIndexedJson(raw: string): Map<number, unknown> | null {
 
 async function callBatchScoreAll(jobs: Job[], userProfile: string): Promise<Map<number, BatchEntry> | null> {
   const prompt = buildBatchPrompt(jobs, userProfile);
-  const numPredict = 230 * jobs.length + 200;
+  // Combined call emits summary+tech_stack+relevant+match_score per job (more than the old
+  // prescreen-only budget), and the reasoning model occasionally leaks a stray <think> token
+  // despite enable_thinking:false — extra headroom keeps late-batch entries from truncating.
+  const numPredict = 320 * jobs.length + 300;
   let raw: string;
   try {
     raw = await callAIWithRetry(prompt, numPredict, 'batch score');
