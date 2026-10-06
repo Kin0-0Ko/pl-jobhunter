@@ -25,4 +25,4 @@ Added "Download Report" button beside "Scan Market" button in `apps/frontend/src
 ## TASK-506: Spec check
 Status: DONE
 `pnpm -r build` (shared/backend/frontend) passes typecheck. `pnpm vitest run` in apps/backend: 7 files, 36 tests passed.
-Commit hash: see git log after commit.
+Commit hash: cf38fb8
