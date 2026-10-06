@@ -55,7 +55,7 @@ export async function reportsRoutes(fastify: FastifyInstance): Promise<void> {
           jobs_by_status[status] += 1;
         }
         const score = row['MATCH_SCORE'] as number | null;
-        if (score != null) {
+        if (score != null && score >= 0) {
           scoreSum += score;
           scoreCount += 1;
           topMatches.push({

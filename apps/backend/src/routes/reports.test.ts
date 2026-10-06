@@ -63,6 +63,7 @@ describe('GET /api/reports/activity', () => {
       { SOURCE: 'justjoin', STATUS: 'APPLIED', ID: 'a', TITLE: 'Dev A', COMPANY: 'Acme', MATCH_SCORE: 90 },
       { SOURCE: 'nofluff', STATUS: 'NEW', ID: 'b', TITLE: 'Dev B', COMPANY: 'Corp', MATCH_SCORE: 70 },
       { SOURCE: 'justjoin', STATUS: 'REJECTED', ID: 'c', TITLE: 'Dev C', COMPANY: 'Zet', MATCH_SCORE: null },
+      { SOURCE: 'nofluff', STATUS: 'NEW', ID: 'd', TITLE: 'Dev D', COMPANY: 'Fallback Co', MATCH_SCORE: -1 },
     ];
     const conn = makeConn(rows);
     vi.mocked(getPool).mockResolvedValue(makePool(conn) as never);
@@ -78,11 +79,13 @@ describe('GET /api/reports/activity', () => {
       totals: { jobs_scraped: number; jobs_by_source: Record<string, number>; applied: number; rejected: number };
       ai: { avg_match_score: number; top_matches: { id: string }[] };
     };
-    expect(body.totals.jobs_scraped).toBe(3);
-    expect(body.totals.jobs_by_source).toEqual({ justjoin: 2, nofluff: 1 });
+    expect(body.totals.jobs_scraped).toBe(4);
+    expect(body.totals.jobs_by_source).toEqual({ justjoin: 2, nofluff: 2 });
     expect(body.totals.applied).toBe(1);
     expect(body.totals.rejected).toBe(1);
+    // -1 is Ollama's fallback sentinel for failed scoring, not a real score — must be excluded
     expect(body.ai.avg_match_score).toBe(80);
+    expect(body.ai.top_matches.map((m) => m.id)).not.toContain('d');
     expect(body.ai.top_matches[0]?.id).toBe('a');
   });
 
