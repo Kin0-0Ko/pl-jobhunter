@@ -55,3 +55,28 @@ export interface RawJob {
   currency: string;
   created_at: string;
 }
+
+export interface ActivityReportTopMatch {
+  id: string;
+  title: string;
+  company: string;
+  match_score: number;
+}
+
+export interface ActivityReport {
+  period: { from: string; to: string };
+  generated_at: string;
+  totals: {
+    jobs_scraped: number;
+    jobs_by_source: Record<string, number>;
+    jobs_by_status: Record<JobStatus, number>;
+    applied: number;
+    interviewing: number;
+    offers: number;
+    rejected: number;
+  };
+  ai: {
+    avg_match_score: number | null;
+    top_matches: ActivityReportTopMatch[];
+  };
+}
