@@ -6,13 +6,14 @@ import { FilterBar } from './components/FilterBar.js';
 import { AnalyticsWidget } from './components/AnalyticsWidget.js';
 import { ProfileForm } from './components/ProfileForm.js';
 import { ErrorState } from './components/ErrorState.js';
-import { triggerEtl } from './api/client.js';
+import { triggerEtl, downloadActivityReport } from './api/client.js';
 
 type Tab = 'board' | 'profile';
 
 export function App() {
   const { jobs, loading, error, updateStatus, refetch } = useJobs();
   const [scanning, setScanning] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -26,6 +27,16 @@ export function App() {
       setScanning(false);
     }, 10000);
   }, [refetch]);
+
+  const handleDownloadReport = useCallback(async () => {
+    setDownloading(true);
+    try {
+      await downloadActivityReport();
+    } catch {
+      // download failed — no-op, button resets
+    }
+    setDownloading(false);
+  }, []);
   const { filters, setFilters, clearFilters, filteredJobs, topSkills } = useFilter(jobs);
   const [activeTab, setActiveTab] = useState<Tab>('board');
 
@@ -51,6 +62,13 @@ export function App() {
           className="px-3 py-1.5 text-sm rounded font-medium bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {scanning ? '⏳ Scanning…' : '⚡ Scan Market'}
+        </button>
+        <button
+          onClick={() => { void handleDownloadReport(); }}
+          disabled={downloading}
+          className="px-3 py-1.5 text-sm rounded font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {downloading ? '⏳ Preparing…' : '📥 Download Report'}
         </button>
         <nav className="flex gap-1">
           <button

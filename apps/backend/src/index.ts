@@ -9,6 +9,7 @@ import { closePool } from './config/database.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { profileRoutes } from './routes/profile.js';
 import { etlRoutes } from './routes/etl.js';
+import { reportsRoutes } from './routes/reports.js';
 import { runEtl } from './scheduler/etl.js';
 import { startBot } from './bot/telegram.js';
 
@@ -49,6 +50,7 @@ server.get('/health', {
 await server.register(jobsRoutes);
 await server.register(profileRoutes);
 await server.register(etlRoutes);
+await server.register(reportsRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '0.0.0.0';
