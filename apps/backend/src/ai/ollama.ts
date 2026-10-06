@@ -423,7 +423,7 @@ actually scanned the posting text and found no named technology, not that you sk
 4. match_score: compute it, do not pick a round number and do not reuse a score across jobs unless the math genuinely matches.
    a. required = count of technologies in tech_stack for that job.
    b. covered = how many of them the candidate's skills explicitly cover.
-   c. base = round(100 * covered / required). If tech_stack is genuinely empty after step 2, judge covered/required by overall role fit instead.
+   c. base = round(100 * covered / required). If tech_stack is genuinely empty after step 2: base = 60 if the job TITLE itself names one of the candidate's skills verbatim (e.g. title says "Node.js Developer" and candidate lists Node.js); otherwise base = 5 — do not infer fit from overall role similarity when no concrete technology was found.
    d. Adjust base by -1 to +5 for partial/adjacent matches (e.g. related framework, transferable stack) — do not round the adjustment away.
    e. Clamp to 0-100. If relevant is "no", match_score should still reflect actual fit (do not zero it out artificially).
 

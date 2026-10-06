@@ -322,6 +322,27 @@ describe('scoreJobsBatch()', () => {
     expect(result.size).toBe(0);
   });
 
+  it('prompt no longer tells the model to judge empty tech_stack by overall role fit', async () => {
+    const jobs = [makeBatchJob('a')];
+    let capturedPrompt = '';
+    server.use(
+      http.post('https://integrate.api.nvidia.com/v1/chat/completions', async ({ request }) => {
+        const body = (await request.clone().json()) as { messages: Array<{ content: string }> };
+        capturedPrompt = body.messages[0]?.content ?? '';
+        return HttpResponse.json({
+          choices: [{ message: { content: JSON.stringify({
+            '0': { summary: 'Company builds TypeScript backend services.', tech_stack: ['TypeScript'], relevant: 'yes', match_score: 90 },
+          }) } }],
+        });
+      }),
+    );
+
+    await scoreJobsBatch(jobs, 'TypeScript/Node.js developer');
+    expect(capturedPrompt).not.toContain('overall role fit');
+    expect(capturedPrompt).toContain('base = 5');
+    expect(capturedPrompt).toContain('base = 60');
+  });
+
   it('scores multiple jobs from a single combined prescreen+score call', async () => {
     const jobs = [makeBatchJob('a'), makeBatchJob('b')];
     let callCount = 0;
